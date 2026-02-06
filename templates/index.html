@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MoodCapture - Log Your Mood</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎭 MoodCapture</h1>
+            <p>How are you feeling today?</p>
+        </header>
+
+        <div class="mood-grid">
+            <div class="mood-item" onclick="logMood('horrible')">
+                <div class="emoji">😩</div>
+                <div class="mood-label">Horrible</div>
+            </div>
+            
+            <div class="mood-item" onclick="logMood('not good')">
+                <div class="emoji">😞</div>
+                <div class="mood-label">Not good</div>
+            </div>
+            
+            <div class="mood-item" onclick="logMood('ok')">
+                <div class="emoji">😐</div>
+                <div class="mood-label">Ok</div>
+            </div>
+            
+            <div class="mood-item" onclick="logMood('pretty good')">
+                <div class="emoji">😊</div>
+                <div class="mood-label">Pretty good</div>
+            </div>
+            
+            <div class="mood-item" onclick="logMood('awesome')">
+                <div class="emoji">🤩</div>
+                <div class="mood-label">Awesome</div>
+            </div>
+            
+            <!-- Adding more mood boxes to fill the grid like before -->
+            <div class="mood-item" onclick="logMood('excited')">
+                <div class="emoji">🤗</div>
+                <div class="mood-label">Excited</div>
+            </div>
+            
+            <div class="mood-item" onclick="logMood('tired')">
+                <div class="emoji">😴</div>
+                <div class="mood-label">Tired</div>
+            </div>
+            
+            <div class="mood-item" onclick="logMood('grateful')">
+                <div class="emoji">🙏</div>
+                <div class="mood-label">Grateful</div>
+            </div>
+        </div>
+
+        <div id="message" class="message"></div>
+        <div id="suggestion" class="suggestion"></div>
+        <div id="videoRecommendations" class="video-recommendations"></div>
+    </div>
+
+    <!-- Reason Modal -->
+    <div id="reasonModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalMoodTitle">You're feeling...</h2>
+                <span class="close" onclick="closeReasonModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p>Help us understand what's causing this feeling:</p>
+                <form id="reasonForm">
+                    <select id="reasonSelect" class="reason-select">
+                        <option value="">Select a reason...</option>
+                        <option value="work_stress">Work/Study stress</option>
+                        <option value="relationship">Relationship issues</option>
+                        <option value="health">Health concerns</option>
+                        <option value="financial">Financial worries</option>
+                        <option value="family">Family problems</option>
+                        <option value="sleep">Lack of sleep</option>
+                        <option value="physical_pain">Physical pain/discomfort</option>
+                        <option value="loneliness">Feeling lonely</option>
+                        <option value="overwhelmed">Feeling overwhelmed</option>
+                        <option value="boredom">Boredom</option>
+                        <option value="weather">Weather/seasonal</option>
+                        <option value="other">Other</option>
+                    </select>
+                    <div class="modal-buttons">
+                        <button type="button" onclick="submitMoodWithReason()" class="btn-primary">Get Suggestions</button>
+                        <button type="button" onclick="closeReasonModal()" class="btn-secondary">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
