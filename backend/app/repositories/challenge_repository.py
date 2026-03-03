@@ -22,7 +22,7 @@ class ChallengeRepository:
                     c.points,
                     uc.progress,
                     uc.status,
-                    uc.started_at,
+                    uc.joined_at,
                     (SELECT COUNT(*) FROM challenge_progress cp 
                      WHERE cp.user_challenge_id = uc.id AND cp.target_met = 1) as days_completed
                 FROM challenges c
@@ -30,7 +30,7 @@ class ChallengeRepository:
                 WHERE uc.user_id = ? 
                 AND uc.status = 'active'
                 AND c.is_active = 1
-                ORDER BY uc.started_at DESC
+                ORDER BY uc.joined_at DESC
             ''', (user_id,))
             
             rows = cursor.fetchall()
