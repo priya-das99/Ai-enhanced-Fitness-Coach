@@ -619,37 +619,59 @@ class ChatEngineWorkflow:
         - If mood NOT logged today: Show MOOD SELECTOR + activity buttons (without Log Mood)
         - If mood logged today: Show activity buttons (with Log Mood)
         """
-        from .mood_handler import has_logged_mood_today
-        from .unified_state import get_workflow_state
-        
-        # Reset workflow state on init
-        workflow_state = get_workflow_state(user_id)
-        workflow_state.complete_workflow()
-        logger.info(f"Init conversation - reset workflow state for user {user_id}")
-        
-        # Check if user has logged mood today
-        mood_logged_today = has_logged_mood_today(user_id)
-        
-        if not mood_logged_today:
-            # Mood NOT logged - show MOOD SELECTOR + activity buttons (WITHOUT Log Mood)
+        try:
+            from .mood_handler import has_logged_mood_today
+            from .unified_state import get_workflow_state
+            
+            # Reset workflow state on init
+            workflow_state = get_workflow_state(user_id)
+            workflow_state.complete_workflow()
+            logger.info(f"Init conversation - reset workflow state for user {user_id}")
+            
+            # Check if user has logged mood today
+            mood_logged_today = has_logged_mood_today(user_id)
+            
+            if not mood_logged_today:
+                # Mood NOT logged - show MOOD SELECTOR + activity buttons (WITHOUT Log Mood)
+                return {
+                    'message': "Welcome! How are you feeling today? 😊",
+                    'ui_elements': ['emoji_selector', 'activity_buttons'],
+                    'activity_options': [
+                        {'id': 'log_water', 'label': '💧 Log Water'},
+                        {'id': 'log_sleep', 'label': '😴 Log Sleep'},
+                        {'id': 'log_exercise', 'label': '🏃 Log Exercise'},
+                        {'id': 'log_weight', 'label': '⚖️ Log Weight'}
+                        # NO Log Mood button - mood selector is shown above
+                    ],
+                    'persistent_buttons': False,
+                    'completed': False,
+                    'state': 'idle'
+                }
+            else:
+                # Mood already logged - show activity buttons (WITH Log Mood)
+                return {
+                    'message': "Welcome back! What would you like to track? 🌟",
+                    'ui_elements': ['activity_buttons'],
+                    'activity_options': [
+                        {'id': 'log_water', 'label': '💧 Log Water'},
+                        {'id': 'log_sleep', 'label': '😴 Log Sleep'},
+                        {'id': 'log_exercise', 'label': '🏃 Log Exercise'},
+                        {'id': 'log_weight', 'label': '⚖️ Log Weight'},
+                        {'id': 'log_mood', 'label': '😊 Log Mood'}
+                        # Log Mood button available - can log mood again
+                    ],
+                    'persistent_buttons': False,
+                    'completed': True,
+                    'state': 'idle'
+                }
+        except Exception as e:
+            logger.error(f"Error in init_conversation for user {user_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Return a fallback response
             return {
-                'message': "Welcome! How are you feeling today? 😊",
-                'ui_elements': ['emoji_selector', 'activity_buttons'],
-                'activity_options': [
-                    {'id': 'log_water', 'label': '💧 Log Water'},
-                    {'id': 'log_sleep', 'label': '😴 Log Sleep'},
-                    {'id': 'log_exercise', 'label': '🏃 Log Exercise'},
-                    {'id': 'log_weight', 'label': '⚖️ Log Weight'}
-                    # NO Log Mood button - mood selector is shown above
-                ],
-                'persistent_buttons': False,
-                'completed': False,
-                'state': 'idle'
-            }
-        else:
-            # Mood already logged - show activity buttons (WITH Log Mood)
-            return {
-                'message': "Welcome back! What would you like to track? 🌟",
+                'message': "Welcome! What would you like to track? 🌟",
                 'ui_elements': ['activity_buttons'],
                 'activity_options': [
                     {'id': 'log_water', 'label': '💧 Log Water'},
@@ -657,7 +679,6 @@ class ChatEngineWorkflow:
                     {'id': 'log_exercise', 'label': '🏃 Log Exercise'},
                     {'id': 'log_weight', 'label': '⚖️ Log Weight'},
                     {'id': 'log_mood', 'label': '😊 Log Mood'}
-                    # Log Mood button available - can log mood again
                 ],
                 'persistent_buttons': False,
                 'completed': True,

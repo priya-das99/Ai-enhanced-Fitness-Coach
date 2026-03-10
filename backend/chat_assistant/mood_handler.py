@@ -2,7 +2,7 @@
 # Handles mood logging flow - saves to database
 
 from datetime import datetime, date
-from db import get_connection
+from app.core.database import get_db
 
 # Emoji to mood value mapping
 MOOD_EMOJIS = {
@@ -51,29 +51,28 @@ def save_mood_log(user_id, mood_emoji, reason=None, intensity=None, stress_level
         confidence_level: Optional confidence level (1-10)
         tags: Optional list of tags
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    mood_value = get_mood_value(mood_emoji)
-    
-    # Use local timestamp
-    local_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
-    # Convert tags list to JSON string if provided
-    import json
-    tags_json = json.dumps(tags) if tags else None
-    
-    cursor.execute('''
-        INSERT INTO mood_logs 
-        (user_id, mood, mood_emoji, mood_intensity, stress_level, 
-         energy_level, confidence_level, reason, reason_category, tags, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (user_id, str(mood_value), mood_emoji, intensity, stress_level,
-          energy_level, confidence_level, reason, None, tags_json, local_timestamp))
-    
-    mood_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        
+        mood_value = get_mood_value(mood_emoji)
+        
+        # Use local timestamp
+        local_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Convert tags list to JSON string if provided
+        import json
+        tags_json = json.dumps(tags) if tags else None
+        
+        cursor.execute('''
+            INSERT INTO mood_logs 
+            (user_id, mood, mood_emoji, mood_intensity, stress_level, 
+             energy_level, confidence_level, reason, reason_category, tags, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (user_id, str(mood_value), mood_emoji, intensity, stress_level,
+              energy_level, confidence_level, reason, None, tags_json, local_timestamp))
+        
+        mood_id = cursor.lastrowid
+        conn.commit()
     
     # Update challenge progress for mood logging
     try:
@@ -100,20 +99,19 @@ def save_mood_log(user_id, mood_emoji, reason=None, intensity=None, stress_level
 
 def get_user_mood_logs(user_id, limit=10):
     """Get recent mood logs for user from database"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT id, user_id, mood, mood_emoji, reason, timestamp,
-               mood_intensity, stress_level, energy_level, confidence_level, tags
-        FROM mood_logs
-        WHERE user_id = ?
-        ORDER BY timestamp DESC
-        LIMIT ?
-    ''', (user_id, limit))
-    
-    rows = cursor.fetchall()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, user_id, mood, mood_emoji, reason, timestamp,
+                   mood_intensity, stress_level, energy_level, confidence_level, tags
+            FROM mood_logs
+            WHERE user_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        ''', (user_id, limit))
+        
+        rows = cursor.fetchall()
     
     import json
     logs = []
@@ -136,33 +134,31 @@ def get_user_mood_logs(user_id, limit=10):
 
 def has_logged_mood_today(user_id):
     """Check if user has logged mood today"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT COUNT(*) FROM mood_logs
-        WHERE user_id = ? AND DATE(timestamp) = DATE('now')
-    ''', (user_id,))
-    
-    count = cursor.fetchone()[0]
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT COUNT(*) FROM mood_logs
+            WHERE user_id = ? AND DATE(timestamp) = DATE('now')
+        ''', (user_id,))
+        
+        count = cursor.fetchone()[0]
     
     return count > 0
 
 def get_last_mood_log_time(user_id):
     """Get timestamp of last mood log for user"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT timestamp FROM mood_logs
-        WHERE user_id = ?
-        ORDER BY timestamp DESC
-        LIMIT 1
-    ''', (user_id,))
-    
-    row = cursor.fetchone()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT timestamp FROM mood_logs
+            WHERE user_id = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+        ''', (user_id,))
+        
+        row = cursor.fetchone()
     
     if row:
         return datetime.fromisoformat(row[0])
