@@ -6,12 +6,14 @@ const CONFIG = {
 };
 
 // Dynamic API URL based on environment
-const API_BASE_URL = window.location.hostname === 'localhost' 
-    ? CONFIG.LOCAL_API_URL
-    : CONFIG.PRODUCTION_API_URL;
+const getApiBaseUrl = () => {
+    return window.location.hostname === 'localhost' 
+        ? CONFIG.LOCAL_API_URL
+        : CONFIG.PRODUCTION_API_URL;
+};
 
 // Export for use in other files
 window.API_CONFIG = {
-    API_BASE_URL,
+    getApiBaseUrl,
     CONFIG
 };
