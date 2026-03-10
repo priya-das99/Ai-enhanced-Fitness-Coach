@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     # Database
     DATABASE_PATH: str = os.path.join(os.path.dirname(__file__), '..', 'mood_capture.db')
     
-    # CORS
-    ALLOWED_ORIGINS: str = "http://localhost:8080,http://127.0.0.1:8080,http://localhost:8000,http://127.0.0.1:8000"
+    # CORS - Allow local, CodeSandbox, and ngrok domains
+    ALLOWED_ORIGINS: str = "http://localhost:8080,http://127.0.0.1:8080,http://localhost:8000,http://127.0.0.1:8000,https://*.codesandbox.io,https://*.csb.app,https://*.ngrok.io,https://*.ngrok-free.app"
     
     # OpenAI/LLM Configuration (Optional)
     OPENAI_API_KEY: str = ""

@@ -8,13 +8,14 @@ from db import get_connection
 MOOD_EMOJIS = {
     '😄': 5,  # Awesome
     '😊': 4,  # Pretty Good
+    '🙂': 4,  # Pretty Good (alternative)
     '😐': 3,  # Okay
     '😟': 2,  # Not good
     '😢': 1,  # Horrible
 }
 
 # Positive moods (don't need reason)
-POSITIVE_MOODS = ['😄', '😊']
+POSITIVE_MOODS = ['😄', '😊', '🙂']
 
 # Negative/neutral moods (ask for reason or suggest activities)
 NEGATIVE_MOODS = ['😐', '😟', '😢']

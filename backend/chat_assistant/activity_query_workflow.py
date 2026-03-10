@@ -1,12 +1,15 @@
 """
 Activity Query Workflow - Handles requests for activity suggestions
 Responds to queries like "what activity for stress", "help me with anxiety", etc.
+
+Uses LLM-based reason extraction to understand ANY user query without keyword matching.
 """
 from typing import Dict, Any, Optional, List
 from chat_assistant.workflow_base import BaseWorkflow, WorkflowResponse
 from chat_assistant.smart_suggestions import get_smart_suggestions
 from chat_assistant.context_builder_simple import build_context
 from chat_assistant.unified_state import WorkflowState
+from chat_assistant.llm_service import get_llm_service, LLMUnavailableError, LLMAPIError
 import re
 import logging
 
@@ -21,6 +24,7 @@ class ActivityQueryWorkflow(BaseWorkflow):
             workflow_name="activity_query",
             handled_intents=['activity_query', 'activity_request', 'activity_suggestion']
         )
+        self.llm_service = get_llm_service()
     
     # Map keywords to mood emoji and reason
     REASON_MAPPING = {
@@ -92,15 +96,106 @@ class ActivityQueryWorkflow(BaseWorkflow):
         return is_activity_query
     
     def _extract_reason(self, message: str) -> Dict[str, str]:
-        """Extract reason and mood from the message"""
+        """
+        Extract reason and mood from the message using LLM.
+        Falls back to keyword matching if LLM unavailable.
+        """
+        # Try LLM-based extraction first
+        if self.llm_service.is_available():
+            try:
+                return self._extract_reason_with_llm(message)
+            except (LLMUnavailableError, LLMAPIError) as e:
+                logger.warning(f"LLM extraction failed: {e}, using keyword fallback")
+        
+        # Fallback to keyword matching
+        return self._extract_reason_with_keywords(message)
+    
+    def _extract_reason_with_llm(self, message: str) -> Dict[str, str]:
+        """
+        Use LLM to extract reason and mood from user message.
+        This handles ANY input without keyword matching.
+        """
+        prompt = f"""You are analyzing a user's wellness query to determine what kind of activities to suggest.
+
+User said: "{message}"
+
+Determine:
+1. Their primary wellness concern/goal
+2. An appropriate mood emoji
+
+Wellness Categories:
+- weight_management: weight gain/loss, body image, weight control
+- nutrition: diet, food, eating habits, meals, calories, healthy eating
+- exercise: workout, fitness, physical activity, building muscle, cardio
+- stress: stress, pressure, overwhelm, tension
+- anxiety: worry, nervousness, fear, panic
+- sleep: insomnia, tired, rest, sleep problems
+- energy: fatigue, low energy, exhaustion, feeling drained
+- mood: general mood improvement, happiness, sadness, emotional wellbeing
+- focus: concentration, productivity, mental clarity, attention
+- calm: relaxation, peace, unwinding, destressing
+- pain: physical discomfort, aches, soreness
+- general: unclear or multiple concerns
+
+Mood Emojis:
+😟 - stressed/worried
+😰 - anxious/overwhelmed  
+😴 - tired/sleepy
+🤔 - thinking/planning
+😊 - happy/positive
+😌 - calm/relaxed
+😢 - sad/down
+😠 - angry/frustrated
+🥗 - nutrition/food related
+💪 - fitness/strength related
+⚖️ - weight/balance related
+
+Respond ONLY with valid JSON (no markdown, no code blocks):
+{{"reason": "category_name", "mood": "emoji"}}"""
+
+        try:
+            # Use call_structured for guaranteed JSON response
+            result = self.llm_service.call_structured(
+                prompt=prompt,
+                json_schema={
+                    "type": "object",
+                    "properties": {
+                        "reason": {"type": "string"},
+                        "mood": {"type": "string"}
+                    },
+                    "required": ["reason", "mood"],
+                    "additionalProperties": False
+                },
+                schema_name="reason_extraction",
+                temperature=0.2,
+                max_tokens=50
+            )
+            
+            logger.info(f"✅ LLM extracted - reason: {result['reason']}, mood: {result['mood']}")
+            return {
+                'mood': result['mood'],
+                'reason': result['reason']
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ LLM extraction error: {e}")
+            raise LLMAPIError(f"Failed to extract reason: {e}")
+    
+    def _extract_reason_with_keywords(self, message: str) -> Dict[str, str]:
+        """
+        Fallback keyword-based extraction (when LLM unavailable).
+        This is the old method - kept for reliability.
+        """
         message_lower = message.lower()
         
         # Check for keywords in the message
         for keyword, mapping in self.REASON_MAPPING.items():
             if keyword in message_lower:
+                logger.info(f"📝 Keyword match: {keyword} -> {mapping['reason']}")
                 return mapping
         
         # Default to general wellness
+        logger.info("📝 No keyword match, defaulting to 'general'")
         return {'mood': '😊', 'reason': 'general'}
     
     def process(

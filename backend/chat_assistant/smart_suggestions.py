@@ -2,7 +2,7 @@
 # Smart LLM-powered activity suggestions with context awareness
 # Phase 3: Weighted Sum Model with 5 normalized signals
 
-from .llm_service import get_llm_service
+from .llm_service import get_llm_service, LLMUnavailableError, LLMAPIError
 import json
 import logging
 import sys
@@ -22,17 +22,25 @@ logger = logging.getLogger(__name__)
 # Initialize ranking logger
 ranking_logger = RankingContextLogger()
 
+# Initialize LLM service
+llm_service = get_llm_service()
+
+# LLM relevance cache (to avoid repeated API calls)
+# Format: {(activity_id, reason): score}
+_llm_relevance_cache = {}
+
 # ============================================================================
 # WEIGHTED SUM MODEL CONFIGURATION
 # ============================================================================
 
 # Signal weights (must sum to ~1.0 for positive signals)
 WEIGHTS = {
-    'reason_match': 0.30,       # Does activity solve the problem? (reduced from 0.35)
-    'user_preference': 0.20,    # Does user like this activity? (reduced from 0.25)
-    'reason_preference': 0.15,  # Does it work for THIS problem? (reduced from 0.20)
-    'time_preference': 0.10,    # Right time of day? (reduced from 0.15)
-    'mood_intensity': 0.15,     # Does effort match mood severity? (NEW)
+    'reason_match': 0.25,       # Does activity solve the problem? (reduced to make room for category)
+    'user_preference': 0.20,    # Does user like this activity?
+    'reason_preference': 0.15,  # Does it work for THIS problem?
+    'time_preference': 0.10,    # Right time of day?
+    'mood_intensity': 0.15,     # Does effort match mood severity?
+    'category_bonus': 0.15,     # Does category match the query? (NEW!)
     'fatigue_penalty': 0.40     # Recently used? (SUBTRACTED)
 }
 
@@ -75,8 +83,10 @@ REASON_CATEGORIES = {
     'relationship': ['relationship', 'friend', 'family', 'partner', 'spouse', 
                      'fight', 'argument', 'conflict', 'breakup', 'divorce', 
                      'lonely', 'loneliness', 'social'],
-    'health': ['tired', 'exhausted', 'sick', 'pain', 'ache', 'sleep', 'energy',
-               'fatigue', 'burnout', 'physical', 'body'],
+    'health': ['tired', 'exhausted', 'sick', 'pain', 'ache', 'energy',
+               'fatigue', 'burnout', 'physical', 'body', 'drained', 'weak'],
+    'sleep': ['sleep', 'insomnia', 'cant sleep', 'sleeping', 'rest', 'tired',
+              'exhausted', 'fatigue', 'sleepy', 'drowsy'],
     'anxiety': ['anxious', 'worried', 'nervous', 'stress', 'stressed', 'panic',
                 'overwhelm', 'overwhelmed', 'tense', 'uneasy'],
     'sadness': ['sad', 'depressed', 'down', 'unhappy', 'miserable', 'hopeless',
@@ -85,19 +95,68 @@ REASON_CATEGORIES = {
               'rage', 'upset'],
     'food': ['food', 'eating', 'diet', 'hungry', 'appetite', 'meal', 'nutrition'],
     'education': ['school', 'study', 'exam', 'test', 'homework', 'class', 
-                  'university', 'college', 'learning']
+                  'university', 'college', 'learning'],
+    'smoking': ['smoking', 'smoke', 'cigarette', 'quit', 'cessation', 'tobacco',
+                'nicotine', 'addiction', 'cravings', 'withdrawal'],
+    'boredom': ['bored', 'boring', 'nothing to do', 'uninterested', 'dull'],
+    # NEW: Weight, fitness, and wellness categories
+    'weight_management': ['weight', 'gaining', 'losing', 'gain', 'lose', 'control', 
+                          'body image', 'scale', 'pounds', 'kilos', 'overweight', 
+                          'underweight', 'fat', 'slim', 'fit'],
+    'nutrition': ['nutrition', 'diet', 'eating', 'food', 'meal', 'calories', 
+                  'healthy eating', 'meal plan', 'portion', 'snack', 'breakfast',
+                  'lunch', 'dinner'],
+    'exercise': ['exercise', 'workout', 'fitness', 'gym', 'training', 'cardio',
+                 'strength', 'muscle', 'running', 'jogging', 'walking', 'yoga',
+                 'sports', 'active', 'physical activity'],
+    'stress': ['stress', 'stressed', 'pressure', 'overwhelm', 'tension', 'strain'],
+    'energy': ['energy', 'tired', 'fatigue', 'exhausted', 'drained', 'low energy',
+               'boost', 'vitality'],
+    'focus': ['focus', 'concentration', 'attention', 'distracted', 'clarity',
+              'mental', 'productivity'],
+    'calm': ['calm', 'relax', 'relaxation', 'peace', 'peaceful', 'tranquil',
+             'unwind', 'destress'],
+    'pain': ['pain', 'ache', 'hurt', 'sore', 'discomfort', 'back pain', 
+             'headache', 'muscle pain'],
+    'mood': ['mood', 'feeling', 'emotional', 'uplift', 'boost mood', 'cheer up']
 }
 
 # Map categories to activity best_for tags
 CATEGORY_TO_ACTIVITY_TAGS = {
     'work': ['work', 'stress', 'overwhelm', 'burnout'],
     'relationship': ['relationship', 'friend', 'support', 'loneliness'],
-    'health': ['tired', 'energy', 'sleep', 'health'],
+    'health': ['energy', 'health', 'wellness'],
+    'sleep': ['sleep', 'rest', 'relaxation', 'calm'],
     'anxiety': ['anxiety', 'stress', 'calm', 'focus'],
     'sadness': ['mood boost', 'support', 'self-reflection'],
     'anger': ['calm', 'stress', 'physical tension'],
-    'food': ['food', 'health'],
-    'education': ['education', 'stress', 'focus']
+    'food': ['food', 'health', 'nutrition'],
+    'education': ['education', 'stress', 'focus'],
+    'smoking': ['smoking', 'quit smoking', 'cessation', 'cravings', 'addiction', 'health'],
+    'boredom': ['engagement', 'fun', 'activity'],
+    # NEW: Weight and fitness related
+    'weight_management': ['weight', 'fitness', 'cardio', 'strength', 'nutrition', 'food', 'health', 'exercise'],
+    'nutrition': ['nutrition', 'food', 'health', 'wellness', 'meal', 'diet'],
+    'exercise': ['exercise', 'fitness', 'cardio', 'strength', 'energy', 'physical tension'],
+    'stress': ['stress', 'calm', 'relaxation', 'breathing', 'meditation'],
+    'energy': ['energy', 'mood boost', 'exercise', 'health'],
+    'focus': ['focus', 'calm', 'mindfulness', 'meditation'],
+    'calm': ['calm', 'relaxation', 'breathing', 'meditation', 'mindfulness'],
+    'pain': ['physical tension', 'stretching', 'yoga', 'rest'],
+    'mood': ['mood boost', 'energy', 'fun', 'social']
+}
+
+# Map reason categories to content database categories (for category bonus)
+REASON_TO_CONTENT_CATEGORIES = {
+    'smoking': ['smoking-cessation'],
+    'work': ['mindfulness', 'yoga'],
+    'health': ['healthy-eating', 'exercise', 'yoga'],
+    'anxiety': ['mindfulness', 'yoga'],
+    'sadness': ['mindfulness'],
+    'anger': ['exercise', 'mindfulness'],
+    'food': ['healthy-eating'],
+    'education': ['mindfulness'],
+    'relationship': ['mindfulness']
 }
 
 # ============================================================================
@@ -137,6 +196,9 @@ def _load_activities_from_db():
             else:
                 best_for = _get_best_for_keywords(category, key)
             
+            # Determine if work-friendly (low effort OR has work-related tags)
+            is_work_friendly = (effort == 'low') or any(tag in ['work', 'desk work', 'office', 'quick'] for tag in best_for)
+            
             activities[key] = {
                 'id': key,
                 'name': title,
@@ -144,7 +206,7 @@ def _load_activities_from_db():
                 'category': category,
                 'effort': effort,
                 'duration': f"{duration} min",
-                'work_friendly': effort == 'low',  # Simple heuristic
+                'work_friendly': is_work_friendly,
                 'is_active': bool(is_active),
                 'best_for': best_for
             }
@@ -179,6 +241,13 @@ def _load_activities_from_db():
             }
             verb = type_map.get(content_type, 'View')
             
+            # Determine if work-friendly (low difficulty OR has work-related tags OR is reading/article)
+            is_work_friendly = (
+                (difficulty == 'low') or 
+                any(tag in ['work', 'desk work', 'office', 'quick'] for tag in tags) or
+                (content_type in ['blog', 'article'])  # Reading is work-friendly
+            )
+            
             activities[key] = {
                 'id': key,
                 'name': f"{verb}: {title}",
@@ -186,7 +255,7 @@ def _load_activities_from_db():
                 'category': category_slug,
                 'effort': difficulty or 'low',
                 'duration': f"{duration} min" if duration else "Varies",
-                'work_friendly': difficulty == 'low',
+                'work_friendly': is_work_friendly,
                 'is_active': True,
                 'best_for': tags,  # Use tags as best_for
                 'action_type': 'open_external',
@@ -362,6 +431,69 @@ WELLNESS_ACTIVITIES_FALLBACK = {
         "best_for": ["exercise", "strength", "fitness", "legs"],
         "is_module": True
     },
+    "track_meals": {
+        "id": "track_meals",
+        "name": "Track Your Meals",
+        "effort": "low",
+        "work_friendly": True,
+        "description": "Log what you eat today for better awareness",
+        "duration": "5 min",
+        "best_for": ["weight_management", "nutrition", "diet", "healthy eating"]
+    },
+    "meal_planning": {
+        "id": "meal_planning",
+        "name": "Plan Healthy Meals",
+        "effort": "medium",
+        "work_friendly": True,
+        "description": "Plan nutritious meals for the week",
+        "duration": "15-20 min",
+        "best_for": ["weight_management", "nutrition", "diet", "meal prep"]
+    },
+    "portion_control": {
+        "id": "portion_control",
+        "name": "Learn Portion Control",
+        "effort": "low",
+        "work_friendly": True,
+        "description": "Tips for managing portion sizes",
+        "duration": "5 min",
+        "best_for": ["weight_management", "nutrition", "healthy eating"]
+    },
+    "cardio_workout": {
+        "id": "cardio_workout",
+        "name": "Cardio Workout",
+        "effort": "high",
+        "work_friendly": False,
+        "description": "Get your heart rate up with cardio",
+        "duration": "20-30 min",
+        "best_for": ["weight_management", "exercise", "fitness", "energy", "cardio"]
+    },
+    "strength_training": {
+        "id": "strength_training",
+        "name": "Strength Training",
+        "effort": "high",
+        "work_friendly": False,
+        "description": "Build muscle with resistance exercises",
+        "duration": "30-45 min",
+        "best_for": ["weight_management", "exercise", "fitness", "muscle building"]
+    },
+    "calorie_awareness": {
+        "id": "calorie_awareness",
+        "name": "Calorie Awareness",
+        "effort": "low",
+        "work_friendly": True,
+        "description": "Learn about your daily calorie needs",
+        "duration": "10 min",
+        "best_for": ["weight_management", "nutrition", "diet"]
+    },
+    "healthy_snacks": {
+        "id": "healthy_snacks",
+        "name": "Healthy Snack Ideas",
+        "effort": "low",
+        "work_friendly": True,
+        "description": "Discover nutritious snack options",
+        "duration": "5 min",
+        "best_for": ["weight_management", "nutrition", "healthy eating"]
+    },
     "meditation_module": {
         "id": "meditation_module",
         "name": "Start Meditation",
@@ -429,9 +561,17 @@ def _apply_hard_filters(activities: list, context: dict) -> list:
     1. Inactive activities
     2. Work hours constraint (can't do non-work-friendly activities at work)
     3. Cooldown (shown too recently) - uses pre-fetched cooldown_set
+    4. Context-aware filters (tired → no high-intensity, sleep issues → relaxation only)
     """
     filtered = []
     cooldown_set = context.get('cooldown_set', set())  # Pre-fetched!
+    
+    # Get reason for context-aware filtering
+    reason = context.get('reason', '').lower() if context.get('reason') else ''
+    
+    # Detect special contexts
+    is_tired = any(word in reason for word in ['tired', 'exhausted', 'fatigue', 'drained', 'weak', 'low energy'])
+    is_sleep_issue = any(word in reason for word in ['sleep', 'insomnia', 'cant sleep', 'sleeping'])
     
     for activity in activities:
         # Filter 1: Inactive activities
@@ -449,6 +589,21 @@ def _apply_hard_filters(activities: list, context: dict) -> list:
             logger.debug(f"  Filtered {activity['id']}: in cooldown")
             continue
         
+        # Filter 4: Context-aware filters
+        # If user is tired/exhausted, filter out high-intensity activities
+        if is_tired:
+            effort = activity.get('effort', 'medium')
+            if effort in ['high', 'intermediate']:
+                logger.debug(f"  Filtered {activity['id']}: too intense for tired user")
+                continue
+        
+        # If user has sleep issues, only suggest relaxation/sleep-related content
+        if is_sleep_issue:
+            best_for = activity.get('best_for', [])
+            if not any(tag in best_for for tag in ['sleep', 'rest', 'relaxation', 'calm', 'mindfulness']):
+                logger.debug(f"  Filtered {activity['id']}: not sleep-related")
+                continue
+        
         filtered.append(activity)
     
     logger.info(f"[Hard Filters] {len(activities)} → {len(filtered)} activities")
@@ -465,6 +620,7 @@ def _categorize_reason(reason: str) -> list:
     Returns: List of matching categories
     
     Example: "stressed about work deadline" → ['work', 'anxiety']
+    Example: "weight_management" → ['weight_management']
     """
     if not reason:
         return []
@@ -472,10 +628,25 @@ def _categorize_reason(reason: str) -> list:
     reason_lower = reason.lower()
     categories = []
     
+    # DEBUG: Log what we're checking
+    logger.info(f"[DEBUG _categorize_reason] Input reason: '{reason}' (lower: '{reason_lower}')")
+    logger.info(f"[DEBUG _categorize_reason] Checking if '{reason_lower}' in REASON_CATEGORIES keys: {list(REASON_CATEGORIES.keys())[:5]}...")
+    
+    # First, check if reason exactly matches a category name (for LLM-extracted reasons)
+    if reason_lower in REASON_CATEGORIES:
+        categories.append(reason_lower)
+        logger.info(f"[DEBUG _categorize_reason] ✅ Exact match found! Returning: {categories}")
+        return categories  # Return immediately for exact match
+    
+    logger.info(f"[DEBUG _categorize_reason] No exact match, checking keywords...")
+    
+    # Otherwise, check if any keywords match
     for category, keywords in REASON_CATEGORIES.items():
         if any(keyword in reason_lower for keyword in keywords):
             categories.append(category)
+            logger.info(f"[DEBUG _categorize_reason] Keyword match: {category}")
     
+    logger.info(f"[DEBUG _categorize_reason] Final categories: {categories}")
     return categories
 
 
@@ -484,43 +655,187 @@ def _compute_reason_score(activity: dict, reason: str) -> float:
     Signal 1: Does activity help with this reason?
     Returns: 0 or 1 (binary match)
     
-    Phase 2: Uses reason categories for better matching
+    Hybrid approach:
+    1. Try tag-based matching first (fast, free)
+    2. If no match, use LLM fallback (catches untagged activities)
+    3. Cache LLM results to avoid repeated calls
     """
+    activity_id = activity.get('id', 'unknown')
+    
+    # DEBUG: Log entry
+    logger.info(f"[DEBUG _compute_reason_score] ===== Activity: {activity_id} =====")
+    logger.info(f"[DEBUG _compute_reason_score] Reason: '{reason}'")
+    
     if not reason:
+        logger.info(f"[DEBUG _compute_reason_score] No reason provided, returning 0.0")
         return 0.0
     
+    # STEP 1: Try tag-based matching (fast, free)
+    tag_score = _compute_reason_score_with_tags(activity, reason)
+    
+    if tag_score > 0:
+        logger.info(f"[DEBUG _compute_reason_score] ✅ Tag match found! Score: {tag_score}")
+        return tag_score
+    
+    logger.info(f"[DEBUG _compute_reason_score] No tag match, trying LLM fallback...")
+    
+    # STEP 2: Try LLM fallback (for untagged/unmatched activities)
+    llm_score = _compute_reason_score_with_llm(activity, reason)
+    
+    if llm_score > 0:
+        logger.info(f"[DEBUG _compute_reason_score] ✅ LLM match found! Score: {llm_score}")
+    else:
+        logger.info(f"[DEBUG _compute_reason_score] ❌ No match found")
+    
+    return llm_score
+
+
+def _compute_reason_score_with_tags(activity: dict, reason: str) -> float:
+    """
+    Tag-based matching (fast, free, predictable)
+    """
     # Get reason categories
     categories = _categorize_reason(reason)
+    logger.info(f"[DEBUG _compute_reason_score] Categories from _categorize_reason: {categories}")
     
     if not categories:
         # Fallback to substring matching
+        logger.info(f"[DEBUG _compute_reason_score] No categories, using substring fallback")
         reason_lower = reason.lower()
         best_for = activity.get('best_for', [])
         
         for keyword in best_for:
             if keyword in reason_lower:
+                logger.info(f"[DEBUG _compute_reason_score] ✅ Substring match: '{keyword}' in '{reason_lower}'")
                 return 1.0
         
+        logger.info(f"[DEBUG _compute_reason_score] ❌ No substring match")
         return 0.0
     
     # Check if activity helps with any of the categories
     activity_tags = activity.get('best_for', [])
+    logger.info(f"[DEBUG _compute_reason_score] Activity tags: {activity_tags} (type: {type(activity_tags)})")
     
     for category in categories:
         category_tags = CATEGORY_TO_ACTIVITY_TAGS.get(category, [])
+        logger.info(f"[DEBUG _compute_reason_score] Category '{category}' → looking for tags: {category_tags}")
         
         # Check if any category tag matches activity tags
         for tag in category_tags:
+            logger.info(f"[DEBUG _compute_reason_score]   Checking if '{tag}' in {activity_tags}")
             if tag in activity_tags:
+                logger.info(f"[DEBUG _compute_reason_score]   ✅ MATCH FOUND! '{tag}' is in activity tags")
                 return 1.0  # Match found!
+            else:
+                logger.info(f"[DEBUG _compute_reason_score]   ❌ No match for '{tag}'")
     
+    logger.info(f"[DEBUG _compute_reason_score] ❌ No matches found for any category")
     return 0.0  # No match
+
+
+def _compute_reason_score_with_llm(activity: dict, reason: str) -> float:
+    """
+    LLM-based matching fallback (for untagged activities)
+    Uses caching to avoid repeated API calls
+    """
+    activity_id = activity.get('id', 'unknown')
+    
+    # Check cache first
+    cache_key = (activity_id, reason.lower())
+    if cache_key in _llm_relevance_cache:
+        cached_score = _llm_relevance_cache[cache_key]
+        logger.info(f"[LLM Fallback] Using cached score for {activity_id}: {cached_score}")
+        return cached_score
+    
+    # Check if LLM is available
+    if not llm_service.is_available():
+        logger.info(f"[LLM Fallback] LLM not available, returning 0.0")
+        return 0.0
+    
+    # Use LLM to check relevance
+    try:
+        activity_name = activity.get('name', 'Unknown')
+        activity_desc = activity.get('description', '')
+        
+        prompt = f"""Is this activity relevant for someone with this wellness concern?
+
+Activity: {activity_name}
+Description: {activity_desc}
+
+User's concern: {reason}
+
+Respond with ONLY "yes" or "no"."""
+
+        logger.info(f"[LLM Fallback] Checking relevance for {activity_id}...")
+        
+        response = llm_service.call(
+            prompt=prompt,
+            max_tokens=5,
+            temperature=0.1
+        )
+        
+        response_lower = response.lower().strip()
+        score = 1.0 if 'yes' in response_lower else 0.0
+        
+        # Cache the result
+        _llm_relevance_cache[cache_key] = score
+        
+        logger.info(f"[LLM Fallback] {activity_id} relevance: {response_lower} → score={score}")
+        
+        return score
+        
+    except (LLMUnavailableError, LLMAPIError) as e:
+        logger.warning(f"[LLM Fallback] LLM error: {e}")
+        return 0.0
+    except Exception as e:
+        logger.error(f"[LLM Fallback] Unexpected error: {e}")
+        return 0.0
+    return 0.0  # No match
+
+
+def _compute_category_bonus_score(activity: dict, reason: str) -> float:
+    """
+    Signal 6: Category Bonus - Does the content's category match the query topic?
+    
+    This gives a boost to content that's in the right category.
+    For example, if user asks about "smoking", content in "smoking-cessation" 
+    category gets a bonus even if tags don't perfectly match.
+    
+    Returns: 1.0 if category matches, 0.0 otherwise
+    """
+    # Only applies to content items (not regular activities)
+    if not activity.get('action_type') == 'open_external':
+        return 0.0
+    
+    # Get the content's category
+    content_category = activity.get('category', '').lower()
+    
+    if not content_category:
+        return 0.0
+    
+    # Categorize the reason
+    categories = _categorize_reason(reason)
+    
+    if not categories:
+        return 0.0
+    
+    # Check if content category matches any expected categories for this reason
+    for reason_category in categories:
+        expected_categories = REASON_TO_CONTENT_CATEGORIES.get(reason_category, [])
+        
+        if content_category in expected_categories:
+            logger.debug(f"  Category bonus: {activity['id']} ({content_category}) matches {reason_category}")
+            return 1.0
+    
+    return 0.0
 
 
 def _compute_user_preference_score(activity: dict, context: dict) -> float:
     """
     Signal 2: How much does user like this activity?
     Returns: 0-1 (normalized by max completion count)
+    
+    Matches by ID, name, or activity type keywords
     """
     favorites = context.get('favorite_activities', [])
     
@@ -528,15 +843,47 @@ def _compute_user_preference_score(activity: dict, context: dict) -> float:
         return 0.0  # Neutral = no boost (let reason_match dominate)
     
     activity_id = activity['id']
+    activity_name = activity.get('name', '').lower()
     completion_count = 0
     
+    # Define activity type keywords for fuzzy matching
+    activity_keywords = {
+        'meditation': ['meditation', 'mindful', 'body scan', 'mindfulness'],
+        'breathing': ['breathing', 'breath', 'breathe'],
+        'yoga': ['yoga', 'stretch', 'poses', 'asana'],
+        'short_walk': ['walk', 'walking'],
+        'exercise': ['exercise', 'workout', 'fitness', 'hiit', 'cardio', 'strength'],
+        'journaling': ['journal', 'writing', 'reflect']
+    }
+    
+    # Try to match by ID, name, or keywords
     for fav in favorites:
-        if fav.get('id') == activity_id:
-            completion_count = fav.get('completion_count', 0)
+        fav_id = fav.get('id', '')
+        fav_name = fav.get('name', '').lower()
+        
+        # Direct ID match
+        if fav_id == activity_id:
+            completion_count = fav.get('count', 0)
+            break
+        
+        # Direct name match
+        if fav_name == activity_name:
+            completion_count = fav.get('count', 0)
+            break
+        
+        # Keyword-based fuzzy matching
+        for fav_type, keywords in activity_keywords.items():
+            if fav_id == fav_type or any(keyword in fav_name for keyword in keywords):
+                # Check if current activity matches this type
+                if any(keyword in activity_name for keyword in keywords):
+                    completion_count = fav.get('count', 0)
+                    break
+        
+        if completion_count > 0:
             break
     
     # Normalize by max completion count
-    max_count = max([f.get('completion_count', 1) for f in favorites])
+    max_count = max([f.get('count', 1) for f in favorites])
     
     if max_count == 0:
         return 0.0  # No completions = no preference
@@ -668,12 +1015,13 @@ def _compute_weighted_score(activity: dict, reason: str, mood_emoji: str, contex
     
     Returns: 0-1 (higher = better match)
     """
-    # Compute all 6 signals (each 0-1)
+    # Compute all 7 signals (each 0-1)
     reason_score = _compute_reason_score(activity, reason)
     user_pref_score = _compute_user_preference_score(activity, context)
     reason_pref_score = _compute_reason_preference_score(activity, reason, context)
     time_score = _compute_time_preference_score(activity, context)
     mood_score = _compute_mood_intensity_score(activity, mood_emoji)
+    category_score = _compute_category_bonus_score(activity, reason)  # NEW!
     fatigue_score = _compute_fatigue_score(activity, context)
     
     # Apply weighted sum
@@ -682,18 +1030,28 @@ def _compute_weighted_score(activity: dict, reason: str, mood_emoji: str, contex
         WEIGHTS['user_preference'] * user_pref_score +
         WEIGHTS['reason_preference'] * reason_pref_score +
         WEIGHTS['time_preference'] * time_score +
-        WEIGHTS['mood_intensity'] * mood_score +  # NEW!
+        WEIGHTS['mood_intensity'] * mood_score +
+        WEIGHTS['category_bonus'] * category_score +  # NEW!
         -WEIGHTS['fatigue_penalty'] * fatigue_score  # Subtract!
     )
     
-    # Store debug info
+    # Store debug info (both raw scores and weighted contributions)
     activity['_debug_scores'] = {
-        'reason': reason_score,
-        'user_pref': user_pref_score,
-        'reason_pref': reason_pref_score,
-        'time': time_score,
-        'mood': mood_score,  # NEW!
-        'fatigue': fatigue_score,
+        'reason_match': reason_score * WEIGHTS['reason_match'],
+        'user_pref': user_pref_score * WEIGHTS['user_preference'],
+        'reason_pref': reason_pref_score * WEIGHTS['reason_preference'],
+        'time_pref': time_score * WEIGHTS['time_preference'],
+        'mood_intensity': mood_score * WEIGHTS['mood_intensity'],
+        'category': category_score * WEIGHTS['category_bonus'],
+        'fatigue': fatigue_score * WEIGHTS['fatigue_penalty'],
+        # Also store raw scores for debugging
+        'raw_reason': reason_score,
+        'raw_user_pref': user_pref_score,
+        'raw_reason_pref': reason_pref_score,
+        'raw_time': time_score,
+        'raw_mood': mood_score,
+        'raw_category': category_score,
+        'raw_fatigue': fatigue_score,
         'final': final_score
     }
     
@@ -717,6 +1075,9 @@ def _score_suggestions_weighted(
     Returns: List of activities sorted by score
     """
     user_id = context.get('user_id', 'unknown')
+    
+    # Add reason to context for filtering
+    context['reason'] = reason
     
     logger.info(f"[Weighted Sum] Scoring {len(activities)} activities for user {user_id}")
     
@@ -744,9 +1105,9 @@ def _score_suggestions_weighted(
         logger.info(
             f"  #{i+1}: {activity['id']:20} "
             f"score={activity['score']:.3f} "
-            f"(r:{debug.get('reason', 0):.1f} "
+            f"(r:{debug.get('reason_match', 0):.1f} "  # FIXED: was 'reason'
             f"u:{debug.get('user_pref', 0):.1f} "
-            f"m:{debug.get('mood', 0):.1f} "  # NEW!
+            f"m:{debug.get('mood_intensity', 0):.1f} "  # FIXED: was 'mood'
             f"f:{debug.get('fatigue', 0):.1f})"
         )
     
@@ -769,6 +1130,7 @@ def get_smart_suggestions(mood_emoji: str, reason: str, context: dict, count: in
     5. Take top 5
     6. LLM re-ranks top 5 (temperature 0.2)
     7. Return top N
+    8. Track shown suggestions for diversity
     
     Args:
         mood_emoji: User's mood emoji (NOW USED in scoring!)
@@ -870,6 +1232,7 @@ def get_smart_suggestions(mood_emoji: str, reason: str, context: dict, count: in
         logger.error(f"[Ranking Logger] Failed to log ranking context: {e}")
     
     # Step 6: Try LLM re-ranking
+    final_suggestions = []
     try:
         from chat_assistant.domain.llm.suggestion_ranker import get_suggestion_ranker
         
@@ -884,14 +1247,53 @@ def get_smart_suggestions(mood_emoji: str, reason: str, context: dict, count: in
         
         if ranked:
             logger.info(f"[Smart Suggestions] ✅ Returned {len(ranked)} LLM-ranked suggestions")
-            return ranked
+            final_suggestions = ranked
     
     except Exception as e:
         logger.warning(f"[Smart Suggestions] LLM ranking failed: {e}")
+        # Fallback - return top N by score
+        logger.info(f"[Smart Suggestions] Using score-based ranking (LLM unavailable)")
+        final_suggestions = scored_activities[:count]
     
-    # Step 7: Fallback - return top N by score
-    logger.info(f"[Smart Suggestions] Using score-based ranking (LLM unavailable)")
-    return scored_activities[:count]
+    # Step 7: Track shown suggestions for diversity
+    if final_suggestions and user_id != 'unknown':
+        try:
+            _track_shown_suggestions(user_id, final_suggestions, mood_emoji, reason)
+        except Exception as e:
+            logger.warning(f"Failed to track shown suggestions: {e}")
+    
+    return final_suggestions
+
+
+def _track_shown_suggestions(user_id: int, suggestions: list, mood_emoji: str, reason: str):
+    """
+    Track shown suggestions in suggestion_history table for diversity.
+    This enables the cooldown filter to work properly.
+    """
+    try:
+        db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'mood_capture.db')
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        shown_at = datetime.now().isoformat()
+        
+        for suggestion in suggestions:
+            suggestion_key = suggestion.get('id')
+            if suggestion_key:
+                cursor.execute("""
+                    INSERT INTO suggestion_history 
+                    (user_id, suggestion_key, mood_emoji, reason, shown_at, accepted, accepted_at)
+                    VALUES (?, ?, ?, ?, ?, 0, NULL)
+                """, (str(user_id), suggestion_key, mood_emoji, reason, shown_at))
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"[Diversity] Tracked {len(suggestions)} shown suggestions for user {user_id}")
+        
+    except Exception as e:
+        logger.error(f"[Diversity] Failed to track suggestions: {e}")
+        raise
 
 
 # ============================================================================

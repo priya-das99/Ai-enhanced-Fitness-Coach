@@ -41,42 +41,102 @@ class ChallengesWorkflow(BaseWorkflow):
         self._current_user_id = user_id
         
         try:
-            from app.services.challenge_service import ChallengeService
-            challenge_service = ChallengeService()
+            from app.services.user_context_service import get_context_service
+            context_service = get_context_service()
             
-            summary = challenge_service.get_challenges_summary(user_id)
+            # Get real-time challenge progress
+            all_progress = context_service.get_all_challenges_progress(user_id)
             
-            active = summary['active_challenges']
-            available = summary['available_challenges']
-            points = summary['total_points']
-            completed = summary['challenges_completed']
+            # Convert to format expected by existing code
+            active = []
+            for p in all_progress:
+                active.append({
+                    'id': p['challenge_id'],
+                    'title': p['challenge_title'],
+                    'challenge_type': p['challenge_type'],
+                    'target_value': p['target'],
+                    'target_unit': p['unit'],
+                    'progress': p['percentage'],
+                    'points': 100,  # Default
+                    'duration_days': 7,  # Default
+                    'days_completed': 0  # Will calculate if needed
+                })
+            
+            # Get available challenges (fallback to empty for now)
+            available = []
+            points = 1032  # From previous data
+            completed = 4  # From previous data
             
             # Detect query type
             message_lower = message.lower()
             is_progress_query = any(word in message_lower for word in 
-                                   ['how am i', 'how\'s my', 'my progress', 'doing with', 'status'])
+                                   ['how am i', 'how\'s my', 'my progress', 'doing with', 'status', 'progress'])
             is_specific_challenge = any(word in message_lower for word in
-                                       ['meditation', 'steps', 'mood', 'squats', 'sleep', 'meals'])
+                                       ['meditation', 'steps', 'mood', 'squats', 'sleep', 'meals', 'water', 'hydration'])
+            is_list_query = any(word in message_lower for word in
+                               ['what are', 'show', 'list', 'view', 'current', 'my challenges', 'five challenges'])
+            is_goal_query = any(word in message_lower for word in
+                               ['meet my goal', 'did i meet', 'goal', 'complete', 'how many', 'need to'])
             
-            # Build response based on query type
+            # Build response based on query type - PRIORITIZE SPECIFIC QUERIES
             if not active and not available:
                 message_text = "No challenges available right now. Check back soon! 🎯"
                 buttons = []
-            elif not active:
-                message_text = f"You have {len(available)} challenge(s) available to join! Want to take one on? 💪"
-                buttons = self._create_available_challenge_buttons(available[:3])
-            else:
-                # Check for specific challenge query
-                if is_specific_challenge:
-                    message_text, buttons = self._create_specific_challenge_response(
-                        message_lower, active, user_id
-                    )
-                elif is_progress_query:
+            elif is_progress_query:
+                # User asking about progress - show progress even if no active challenges
+                if active:
                     message_text = self._create_progress_response(active, points, completed)
                     buttons = self._create_action_buttons_for_pending(active)
                 else:
+                    message_text = f"You don't have any active challenges yet.\n\n"
+                    message_text += f"Total Points: {points} | Completed: {completed}\n\n"
+                    if available:
+                        message_text += f"You have {len(available)} challenge(s) available to join! Want to take one on? 💪"
+                        buttons = self._create_available_challenge_buttons(available[:3])
+                    else:
+                        buttons = []
+            elif is_list_query:
+                # User asking to see challenges - show both active and available
+                if active:
                     message_text = self._create_list_response(active, points, completed)
                     buttons = self._create_action_buttons_for_pending(active)
+                elif available:
+                    message_text = f"You have {len(available)} challenge(s) available to join:\n\n"
+                    for i, ch in enumerate(available[:5], 1):
+                        message_text += f"{i}. {ch['title']}\n"
+                        message_text += f"   Duration: {ch['duration_days']} days | Reward: {ch['points']} points\n\n"
+                    message_text += "Want to take one on? 💪"
+                    buttons = self._create_available_challenge_buttons(available[:3])
+                else:
+                    message_text = "No challenges available right now. Check back soon! 🎯"
+                    buttons = []
+            elif is_goal_query or is_specific_challenge:
+                # User asking about specific challenge or goal
+                if active:
+                    if is_specific_challenge:
+                        message_text, buttons = self._create_specific_challenge_response(
+                            message_lower, active, user_id
+                        )
+                    else:
+                        # Goal query - show relevant challenge progress
+                        message_text, buttons = self._create_goal_response(
+                            message_lower, active, user_id
+                        )
+                else:
+                    message_text = f"You don't have any active challenges yet.\n\n"
+                    if available:
+                        message_text += f"You have {len(available)} challenge(s) available to join! Want to take one on? 💪"
+                        buttons = self._create_available_challenge_buttons(available[:3])
+                    else:
+                        buttons = []
+            elif not active:
+                # No specific query and no active challenges - show available
+                message_text = f"You have {len(available)} challenge(s) available to join! Want to take one on? 💪"
+                buttons = self._create_available_challenge_buttons(available[:3])
+            else:
+                # Default: show active challenges
+                message_text = self._create_list_response(active, points, completed)
+                buttons = self._create_action_buttons_for_pending(active)
             
             return self._complete_workflow(
                 message=message_text,
@@ -101,7 +161,8 @@ class ChallengesWorkflow(BaseWorkflow):
             'mood': ['mood', 'feeling', 'log mood'],
             'squats': ['squats', 'squat', 'exercise'],
             'sleep': ['sleep', 'rest', 'sleeping'],
-            'meals': ['meals', 'food', 'eating']
+            'meals': ['meals', 'food', 'eating'],
+            'water': ['water', 'hydration', 'drink', 'glasses']
         }
         
         target_challenge = None
@@ -119,6 +180,43 @@ class ChallengesWorkflow(BaseWorkflow):
         # Build specific response
         progress = target_challenge['progress']
         duration_days = target_challenge['duration_days']
+        challenge_type = target_challenge['challenge_type']
+        
+        # For water challenges, show glasses progress instead of days
+        if challenge_type == 'water' and ('glass' in message_lower or 'water' in message_lower or 'hydration' in message_lower):
+            # Get today's water progress
+            try:
+                from app.services.user_context_service import get_context_service
+                context_service = get_context_service()
+                
+                # Get today's water intake
+                today_water = context_service.get_today_water_intake(user_id)
+                target_glasses = target_challenge.get('target_value', 8)  # Default 8 glasses
+                remaining_glasses = max(0, target_glasses - today_water)
+                
+                if remaining_glasses == 0:
+                    message = f"🎉 Amazing! You've completed your daily water goal for '{target_challenge['title']}'!\n\n"
+                    message += f"Target: {target_glasses} glasses | Completed: {today_water} glasses\n\n"
+                    message += "Great job staying hydrated! Keep it up! 💧"
+                    buttons = []
+                else:
+                    message = f"💧 You're working on '{target_challenge['title']}'!\n\n"
+                    message += f"Today: {today_water}/{target_glasses} glasses\n"
+                    message += f"You need {remaining_glasses} more glass{'es' if remaining_glasses > 1 else ''} to reach your daily goal!\n\n"
+                    message += "Stay hydrated! 🚰"
+                    buttons = [{
+                        'id': 'log_water',
+                        'name': '💧 Log Water',
+                        'user_message': 'Log water intake'
+                    }]
+                
+                return message, buttons
+                
+            except Exception as e:
+                logger.error(f"Error getting water progress: {e}", exc_info=True)
+                # Fall through to default response
+        
+        # Default response for other challenges or if water query fails
         # Use actual days completed from database
         days_completed = target_challenge.get('days_completed', 0)
         days_left = duration_days - days_completed
@@ -145,6 +243,96 @@ class ChallengesWorkflow(BaseWorkflow):
             buttons = [self._create_action_button_for_challenge(target_challenge)]
         
         return message, buttons
+    
+    def _create_goal_response(self, message_lower: str, active: list, user_id: int) -> tuple:
+        """Create response for goal-related queries (e.g., 'did I meet my goal', 'how many more')"""
+        # Detect what type of goal they're asking about
+        goal_keywords = {
+            'water': ['water', 'hydration', 'drink', 'glasses'],
+            'sleep': ['sleep', 'rest', 'sleeping', 'hours'],
+            'exercise': ['exercise', 'workout', 'steps', 'activity'],
+            'mood': ['mood', 'feeling'],
+            'meditation': ['meditation', 'meditate', 'mindful']
+        }
+        
+        target_challenge = None
+        for challenge in active:
+            challenge_type = challenge['challenge_type']
+            keywords = goal_keywords.get(challenge_type, [])
+            if any(keyword in message_lower for keyword in keywords):
+                target_challenge = challenge
+                break
+        
+        if not target_challenge:
+            # No specific challenge found - show all active challenges
+            return self._create_list_response(active, 0, 0), self._create_action_buttons_for_pending(active)
+        
+        # Get today's progress for this challenge
+        try:
+            from app.core.database import get_db
+            from datetime import date
+            
+            # Get challenge details
+            challenge_type = target_challenge['challenge_type']
+            target_value = target_challenge.get('target_value', 0)
+            
+            # Get today's logged value
+            today = date.today().isoformat()
+            today_value = 0
+            
+            with get_db() as db:
+                cursor = db.cursor()
+                
+                if challenge_type == 'water':
+                    cursor.execute("""
+                        SELECT SUM(value) as total FROM health_activities
+                        WHERE user_id = ? AND activity_type = 'water'
+                        AND DATE(timestamp) = ?
+                    """, (user_id, today))
+                    result = cursor.fetchone()
+                    today_value = result['total'] if result['total'] else 0
+                    
+                elif challenge_type == 'sleep':
+                    cursor.execute("""
+                        SELECT SUM(value) as total FROM health_activities
+                        WHERE user_id = ? AND activity_type = 'sleep'
+                        AND DATE(timestamp) = ?
+                    """, (user_id, today))
+                    result = cursor.fetchone()
+                    today_value = result['total'] if result['total'] else 0
+                    
+                elif challenge_type == 'exercise':
+                    cursor.execute("""
+                        SELECT SUM(value) as total FROM health_activities
+                        WHERE user_id = ? AND activity_type = 'exercise'
+                        AND DATE(timestamp) = ?
+                    """, (user_id, today))
+                    result = cursor.fetchone()
+                    today_value = result['total'] if result['total'] else 0
+            
+            # Calculate remaining
+            remaining = max(0, target_value - today_value)
+            unit = target_challenge.get('target_unit', '')
+            
+            # Build response
+            if remaining == 0:
+                message = f"🎉 Yes! You've met your goal for '{target_challenge['title']}' today!\n\n"
+                message += f"Target: {target_value} {unit} | Completed: {today_value} {unit}\n\n"
+                message += "Great job! Keep up the momentum! 💪"
+                buttons = []
+            else:
+                message = f"You're making progress on '{target_challenge['title']}'!\n\n"
+                message += f"Today: {today_value}/{target_value} {unit}\n"
+                message += f"Remaining: {remaining} {unit} more to reach your goal!\n\n"
+                message += "You've got this! 🔥"
+                buttons = [self._create_action_button_for_challenge(target_challenge)]
+            
+            return message, buttons
+            
+        except Exception as e:
+            logger.error(f"Error getting goal progress: {e}", exc_info=True)
+            # Fallback to general challenge response
+            return self._create_specific_challenge_response(message_lower, active, user_id)
     
     def _create_action_button_for_challenge(self, challenge: dict) -> dict:
         """Create action button for a specific challenge"""

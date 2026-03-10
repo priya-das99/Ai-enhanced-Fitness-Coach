@@ -21,11 +21,12 @@ class IntentExtractor:
     # Intent types
     INTENT_MOOD_LOGGING = "mood_logging"
     INTENT_ACTIVITY_LOGGING = "activity_logging"
-    INTENT_ACTIVITY_QUERY = "activity_query"  # New: For activity suggestions
+    INTENT_ACTIVITY_QUERY = "activity_query"  # For activity suggestions
+    INTENT_ACTIVITY_SUMMARY = "activity_summary"  # For viewing logged activities
     INTENT_CHALLENGES = "challenges"
     INTENT_GENERAL_CHAT = "general_chat"
     INTENT_CLARIFICATION = "clarification"
-    INTENT_OFF_TOPIC = "off_topic"  # New: For inappropriate/off-topic content
+    INTENT_OFF_TOPIC = "off_topic"
     
     def __init__(self):
         self.llm_service = get_llm_service()
@@ -60,6 +61,7 @@ class IntentExtractor:
                             "mood_logging",
                             "activity_logging",
                             "activity_query",
+                            "activity_summary",
                             "challenges",
                             "general_chat",
                             "clarification",
@@ -72,6 +74,7 @@ class IntentExtractor:
                             "mood_logging",
                             "activity_logging",
                             "activity_query",
+                            "activity_summary",
                             "challenges",
                             "general_chat",
                             "clarification",
@@ -214,26 +217,56 @@ IMPORTANT:
 - "I'm stressed" = mood_logging (expressing feeling only, no request)
 - "what activity for stress" = activity_query (asking for help)
 
-4) challenges
+4) activity_summary
+User asks to VIEW/RETRIEVE their logged activities or health data.
+This is DIFFERENT from activity_logging (which is for LOGGING new data).
+
+Examples:
+"What did I do today?"
+"Show me my activities"
+"How much water did I drink?"
+"Did I exercise today?"
+"What's my water intake today?"
+"Show me my sleep log"
+"Have I logged my mood?"
+"What have I tracked today?"
+"My activities today"
+
+IMPORTANT:
+- "I drank 2 glasses" = activity_logging (LOGGING new data)
+- "How much did I drink" = activity_summary (RETRIEVING logged data)
+- "Did I exercise" = activity_summary (CHECKING if logged)
+- "What did I do" = activity_summary (VIEWING activities)
+
+5) challenges
 User asks about:
-- challenge progress
-- status
-- points
-- performance
+- challenge progress, status, points, performance
 - viewing challenges
+- specific challenge completion requirements
+- how many more [units] needed for challenges
+- challenge-related questions
 
 Examples:
 "How am I doing?"
 "Show my challenges"
 "What's my progress?"
 "How am I doing with sleep?"
+"How many more glasses do I need to complete my water challenge?"
+"What more glass required to complete hydration challenge?"
+"How much more do I need for my challenge?"
+"Am I close to completing my challenge?"
+"Challenge progress"
+"My challenge status"
 
 IMPORTANT:
 If message includes phrases like:
 "how am I doing"
 "my progress"
 "my status"
-"classify as challenges"
+"challenge" + "complete/finish/need/more/required"
+"how many more" + challenge-related terms
+"what more" + challenge-related terms
+→ classify as challenges
 
 5) general_chat
 Greetings, onboarding, help questions, thanks.
@@ -367,8 +400,29 @@ Do NOT include explanations.
         challenge_keywords = [
             'challenge', 'challenges', 'progress', 'points',
             'show challenge', 'my challenge', 'view challenge',
-            'leaderboard', 'achievement'
+            'leaderboard', 'achievement', 'complete challenge',
+            'finish challenge', 'how many more', 'what more',
+            'need to complete', 'required to complete',
+            'close to completing', 'challenge status'
         ]
+        
+        # Special check for challenge completion queries
+        challenge_completion_patterns = [
+            'how many more', 'what more', 'need to complete',
+            'required to complete', 'to finish', 'to complete'
+        ]
+        
+        # Check if message contains challenge + completion pattern
+        has_challenge_word = 'challenge' in message_lower
+        has_completion_pattern = any(pattern in message_lower for pattern in challenge_completion_patterns)
+        
+        if has_challenge_word and has_completion_pattern:
+            return {
+                'primary_intent': 'challenges',
+                'secondary_intent': 'none',
+                'confidence': 'high',
+                'entities': {}
+            }
         
         # Check for clarification keywords
         clarification_keywords = ['yes', 'no', 'yeah', 'nope', 'ok', 'okay', 'sure']

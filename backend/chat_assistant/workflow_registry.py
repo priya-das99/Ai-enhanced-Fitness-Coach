@@ -69,6 +69,13 @@ class WorkflowRegistry:
             logger.warning(f"Could not register ActivityQueryWorkflow: {e}")
         
         try:
+            from .activity_summary_workflow import ActivitySummaryWorkflow
+            self.register(ActivitySummaryWorkflow())
+            logger.info("Auto-registered ActivitySummaryWorkflow")
+        except Exception as e:
+            logger.warning(f"Could not register ActivitySummaryWorkflow: {e}")
+        
+        try:
             from .general_workflow import GeneralWorkflow
             self.register(GeneralWorkflow())
             logger.info("Auto-registered GeneralWorkflow")

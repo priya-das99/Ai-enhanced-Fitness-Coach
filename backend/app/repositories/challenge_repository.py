@@ -20,6 +20,8 @@ class ChallengeRepository:
                     c.challenge_type,
                     c.duration_days,
                     c.points,
+                    c.target_value,
+                    c.target_unit,
                     uc.progress,
                     uc.status,
                     uc.joined_at,
@@ -42,10 +44,12 @@ class ChallengeRepository:
                     'challenge_type': row[3],
                     'duration_days': row[4],
                     'points': row[5],
-                    'progress': row[6],
-                    'status': row[7],
-                    'started_at': row[8],
-                    'days_completed': row[9]
+                    'target_value': row[6],
+                    'target_unit': row[7],
+                    'progress': row[8],
+                    'status': row[9],
+                    'started_at': row[10],
+                    'days_completed': row[11]
                 }
                 for row in rows
             ]
