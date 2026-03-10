@@ -12,17 +12,19 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash using SHA256 pre-hashing"""
     import hashlib
+    import bcrypt
     
     # Pre-hash the plain password with SHA256 (same as during registration)
     password_bytes = plain_password.encode('utf-8')
     sha_hash = hashlib.sha256(password_bytes).digest()
     
-    # Verify the SHA256 hash against the stored bcrypt hash
-    return pwd_context.verify(sha_hash, hashed_password)
+    # Verify the SHA256 hash against the stored bcrypt hash using bcrypt directly
+    return bcrypt.checkpw(sha_hash, hashed_password.encode('utf-8'))
 
 def get_password_hash(password: str) -> str:
     """Hash a password using SHA256 pre-hashing to avoid bcrypt 72-byte limit"""
     import hashlib
+    import bcrypt
     
     # Log password details for debugging
     char_length = len(password)
@@ -39,10 +41,12 @@ def get_password_hash(password: str) -> str:
         
         print(f"[PASSWORD] SHA256 pre-hash length: {len(sha_hash)} bytes")
         
-        # Now hash the SHA256 digest with bcrypt
-        hashed = pwd_context.hash(sha_hash)
+        # Use bcrypt directly instead of passlib to avoid any context issues
+        salt = bcrypt.gensalt()
+        hashed = bcrypt.hashpw(sha_hash, salt)
+        
         print("[PASSWORD] Successfully hashed password with SHA256 + bcrypt")
-        return hashed
+        return hashed.decode('utf-8')
     except Exception as e:
         print(f"[PASSWORD] Error hashing password: {e}")
         raise
