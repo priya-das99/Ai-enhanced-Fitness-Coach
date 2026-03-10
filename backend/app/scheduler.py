@@ -213,6 +213,22 @@ def _generate_evening_challenges_message(incomplete: list) -> str:
         return message
 
 
+@scheduler.scheduled_job('cron', hour=2, minute=0, id='token_cleanup')
+async def token_cleanup_job():
+    """
+    2 AM Daily: Clean up expired blacklisted tokens
+    """
+    logger.info("🕐 Running token cleanup job")
+    
+    try:
+        from app.services.token_service import TokenService
+        token_service = TokenService()
+        token_service.cleanup_expired_tokens()
+        logger.info("✅ Token cleanup job complete")
+    except Exception as e:
+        logger.error(f"❌ Token cleanup job failed: {e}")
+
+
 # ===== SCHEDULER LIFECYCLE =====
 
 def start_scheduler():

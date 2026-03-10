@@ -3,10 +3,11 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.security import OAuth2PasswordBearer
 from app.models.auth import LoginRequest, RegisterRequest, LoginResponse
 from app.models.user import UserResponse
 from app.services.auth_service import AuthService
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, oauth2_scheme
 from typing import Dict
 
 router = APIRouter()
@@ -66,9 +67,31 @@ async def login(request: LoginRequest):
         )
 
 @router.post("/logout")
-async def logout():
-    """Logout user (client should discard token)"""
-    return {"message": "Logout successful"}
+async def logout(current_user: Dict = Depends(get_current_user), token: str = Depends(oauth2_scheme)):
+    """Logout user and blacklist token"""
+    try:
+        # Decode token to get JTI
+        from app.core.security import decode_access_token
+        from app.services.token_service import TokenService
+        from datetime import datetime, timedelta
+        
+        payload = decode_access_token(token)
+        jti = payload.get("jti")
+        user_id = current_user['id']
+        
+        if jti:
+            # Blacklist the token
+            token_service = TokenService()
+            expires_at = datetime.fromtimestamp(payload.get("exp", 0))
+            token_service.blacklist_token(jti, user_id, expires_at)
+            
+            print(f"[LOGOUT] Token blacklisted for user {user_id}")
+        
+        return {"message": "Logout successful"}
+    except Exception as e:
+        print(f"[LOGOUT] Error during logout: {e}")
+        # Even if blacklisting fails, return success (client will clear token)
+        return {"message": "Logout successful"}
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(current_user: Dict = Depends(get_current_user)):

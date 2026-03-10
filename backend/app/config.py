@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = "your-secret-key-change-this-in-production"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     
     # Database
     DATABASE_PATH: str = os.path.join(os.path.dirname(__file__), '..', 'mood_capture.db')

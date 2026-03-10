@@ -21,8 +21,21 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict:
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         user_id_str: str = payload.get("sub")
+        jti: str = payload.get("jti")  # JWT ID for blacklist checking
+        
         if user_id_str is None:
             raise credentials_exception
+        
+        # Check if token is blacklisted
+        if jti:
+            from app.services.token_service import TokenService
+            token_service = TokenService()
+            if token_service.is_token_blacklisted(jti):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token has been revoked",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
         
         # Convert string back to int
         try:

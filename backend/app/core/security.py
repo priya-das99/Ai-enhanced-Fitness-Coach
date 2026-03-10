@@ -52,14 +52,30 @@ def get_password_hash(password: str) -> str:
         raise
 
 def create_access_token(data: dict) -> str:
-    """Create JWT access token"""
+    """Create JWT access token with unique JTI"""
+    import uuid
+    
     to_encode = data.copy()
     
     # Convert sub to string if it's an integer (JWT spec requires string)
     if "sub" in to_encode and isinstance(to_encode["sub"], int):
         to_encode["sub"] = str(to_encode["sub"])
     
+    # Add unique JWT ID for blacklisting
+    jti = str(uuid.uuid4())
+    to_encode["jti"] = jti
+    
     expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
+
+def decode_access_token(token: str) -> dict:
+    """Decode and validate JWT token"""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise Exception("Token has expired")
+    except jwt.JWTError:
+        raise Exception("Invalid token")
