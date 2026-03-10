@@ -18,16 +18,12 @@ class AuthService:
         print(f"[REGISTER] Password length: {len(password)} characters")
         print(f"[REGISTER] Password byte length: {len(password.encode('utf-8'))} bytes")
         
-        # Validate password length (characters)
+        # Validate password length (characters) - minimum requirement only
         if len(password) < 6:
             print("[REGISTER] Password too short")
             raise BadRequestError("Password must be at least 6 characters")
         
-        # Validate password length (bytes) - be more restrictive to avoid bcrypt issues
-        password_bytes = len(password.encode('utf-8'))
-        if password_bytes > 70:  # Use 70 instead of 72 for safety margin
-            print(f"[REGISTER] Password too long: {password_bytes} bytes")
-            raise BadRequestError("Password is too long. Please use a shorter password (max 70 bytes).")
+        # No need to check byte length anymore - SHA256 pre-hashing handles this
         
         # Check if user already exists
         print("[REGISTER] Checking if user exists")
