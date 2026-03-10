@@ -17,6 +17,53 @@ def table_exists(cursor, table_name):
     """, (table_name,))
     return cursor.fetchone() is not None
 
+def migrate_existing_database(cursor):
+    """Migrate existing database to add missing columns"""
+    try:
+        # Check if chat_sessions table exists
+        if not table_exists(cursor, 'chat_sessions'):
+            logger.info("Creating chat_sessions table...")
+            cursor.execute('''
+                CREATE TABLE chat_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    session_start DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    session_end DATETIME,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            ''')
+        
+        # Check if session_id column exists in chat_messages
+        cursor.execute("PRAGMA table_info(chat_messages)")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        if 'session_id' not in columns:
+            logger.info("Adding session_id column to chat_messages...")
+            cursor.execute("ALTER TABLE chat_messages ADD COLUMN session_id INTEGER")
+        
+        # Check mood_logs columns
+        cursor.execute("PRAGMA table_info(mood_logs)")
+        mood_columns = [row[1] for row in cursor.fetchall()]
+        
+        missing_mood_columns = [
+            ('mood_intensity', 'INTEGER'),
+            ('stress_level', 'INTEGER'),
+            ('energy_level', 'INTEGER'),
+            ('confidence_level', 'INTEGER'),
+            ('tags', 'TEXT')
+        ]
+        
+        for col_name, col_type in missing_mood_columns:
+            if col_name not in mood_columns:
+                logger.info(f"Adding {col_name} column to mood_logs...")
+                cursor.execute(f"ALTER TABLE mood_logs ADD COLUMN {col_name} {col_type}")
+        
+        logger.info("Database migration completed")
+        
+    except Exception as e:
+        logger.error(f"Database migration failed: {e}")
+        raise
+
 def init_database():
     """Initialize database with all required tables"""
     try:
@@ -48,6 +95,15 @@ def init_database():
         
         # Create other essential tables
         tables = [
+            ('chat_sessions', '''
+                CREATE TABLE chat_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    session_start DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    session_end DATETIME,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            '''),
             ('mood_logs', '''
                 CREATE TABLE mood_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,6 +112,11 @@ def init_database():
                     mood_emoji TEXT,
                     reason TEXT,
                     reason_category TEXT,
+                    mood_intensity INTEGER,
+                    stress_level INTEGER,
+                    energy_level INTEGER,
+                    confidence_level INTEGER,
+                    tags TEXT,
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 )
@@ -64,11 +125,13 @@ def init_database():
                 CREATE TABLE chat_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
+                    session_id INTEGER,
                     message TEXT NOT NULL,
                     sender TEXT NOT NULL,
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                     metadata TEXT,
-                    FOREIGN KEY (user_id) REFERENCES users(id)
+                    FOREIGN KEY (user_id) REFERENCES users(id),
+                    FOREIGN KEY (session_id) REFERENCES chat_sessions(id)
                 )
             '''),
             ('health_activities', '''
@@ -89,6 +152,9 @@ def init_database():
             if not table_exists(cursor, table_name):
                 logger.info(f"Creating {table_name} table...")
                 cursor.execute(create_sql)
+        
+        # Run migration for existing databases
+        migrate_existing_database(cursor)
         
         # Create demo user if no users exist
         cursor.execute("SELECT COUNT(*) FROM users")
