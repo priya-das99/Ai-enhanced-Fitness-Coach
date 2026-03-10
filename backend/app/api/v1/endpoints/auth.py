@@ -16,6 +16,9 @@ auth_service = AuthService()
 async def register(request: RegisterRequest):
     """Register a new user"""
     try:
+        print(f"Registration attempt - Username: {request.username}, Email: {request.email}")
+        print(f"Password length: {len(request.password)} characters, {len(request.password.encode('utf-8'))} bytes")
+        
         result = auth_service.register_user(
             username=request.username,
             email=request.email,
@@ -33,6 +36,8 @@ async def register(request: RegisterRequest):
     except Exception as e:
         # Log the error for debugging
         print(f"Registration error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return JSONResponse(
             status_code=500,
             content={"error": str(e)}

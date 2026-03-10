@@ -18,6 +18,10 @@ class AuthService:
         if len(password) < 6:
             raise BadRequestError("Password must be at least 6 characters")
         
+        # Validate password isn't too long (bcrypt limit is 72 bytes)
+        if len(password.encode('utf-8')) > 72:
+            raise BadRequestError("Password is too long. Please use a shorter password.")
+        
         # Check if user already exists
         if self.user_repo.exists(username=username, email=email):
             raise BadRequestError("Username or email already exists")

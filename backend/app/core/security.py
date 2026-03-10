@@ -15,6 +15,14 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def get_password_hash(password: str) -> str:
     """Hash a password"""
+    # Bcrypt has a 72-byte limit, so truncate if necessary
+    # Most passwords should be well under this limit
+    if len(password.encode('utf-8')) > 72:
+        # Truncate to 72 bytes, being careful with UTF-8 encoding
+        password_bytes = password.encode('utf-8')[:72]
+        # Decode back, ignoring any incomplete characters at the end
+        password = password_bytes.decode('utf-8', errors='ignore')
+    
     return pwd_context.hash(password)
 
 def create_access_token(data: dict) -> str:
