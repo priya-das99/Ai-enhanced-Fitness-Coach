@@ -40,31 +40,11 @@ app.add_middleware(
 # Define root route FIRST to ensure priority
 @app.get("/", include_in_schema=False)
 async def root():
-    """Serve the main landing page"""
-    from fastapi.responses import FileResponse
-    import os
+    """Serve the frontend landing page"""
+    from fastapi.responses import RedirectResponse
     
-    # Get the project root index.html
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    backend_dir = os.path.dirname(current_dir)
-    project_root = os.path.dirname(backend_dir)
-    index_path = os.path.join(project_root, "index.html")
-    
-    print(f"[ROOT] Looking for index.html at: {index_path}")
-    print(f"[ROOT] File exists: {os.path.exists(index_path)}")
-    
-    if os.path.exists(index_path):
-        print("[ROOT] Serving index.html from project root")
-        return FileResponse(index_path)
-    else:
-        print("[ROOT] index.html not found, returning fallback")
-        # Fallback response
-        return {
-            "message": "AI-Enhanced Fitness Coach API",
-            "status": "running",
-            "frontend": "/frontend/login.html",
-            "docs": f"{settings.API_V1_PREFIX}/docs"
-        }
+    # Redirect to the frontend landing page
+    return RedirectResponse(url="/frontend/index.html", status_code=302)
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
