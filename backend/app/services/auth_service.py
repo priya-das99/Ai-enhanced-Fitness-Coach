@@ -14,21 +14,43 @@ class AuthService:
     
     def register_user(self, username: str, email: str, password: str, full_name: str = "") -> Dict:
         """Register a new user"""
-        # Validate password length
+        print(f"[REGISTER] Starting registration for user: {username}")
+        print(f"[REGISTER] Password length: {len(password)} characters")
+        print(f"[REGISTER] Password byte length: {len(password.encode('utf-8'))} bytes")
+        
+        # Validate password length (characters)
         if len(password) < 6:
+            print("[REGISTER] Password too short")
             raise BadRequestError("Password must be at least 6 characters")
         
-        # Validate password isn't too long (bcrypt limit is 72 bytes)
-        if len(password.encode('utf-8')) > 72:
-            raise BadRequestError("Password is too long. Please use a shorter password.")
+        # Validate password length (bytes) - be more restrictive to avoid bcrypt issues
+        password_bytes = len(password.encode('utf-8'))
+        if password_bytes > 70:  # Use 70 instead of 72 for safety margin
+            print(f"[REGISTER] Password too long: {password_bytes} bytes")
+            raise BadRequestError("Password is too long. Please use a shorter password (max 70 bytes).")
         
         # Check if user already exists
+        print("[REGISTER] Checking if user exists")
         if self.user_repo.exists(username=username, email=email):
+            print("[REGISTER] User already exists")
             raise BadRequestError("Username or email already exists")
         
         # Hash password and create user
-        password_hash = get_password_hash(password)
-        user_id = self.user_repo.create(username, email, password_hash, full_name)
+        print("[REGISTER] Hashing password")
+        try:
+            password_hash = get_password_hash(password)
+            print("[REGISTER] Password hashed successfully")
+        except Exception as e:
+            print(f"[REGISTER] Password hashing failed: {e}")
+            raise BadRequestError(f"Password processing failed: {str(e)}")
+        
+        print("[REGISTER] Creating user in database")
+        try:
+            user_id = self.user_repo.create(username, email, password_hash, full_name)
+            print(f"[REGISTER] User created successfully with ID: {user_id}")
+        except Exception as e:
+            print(f"[REGISTER] Database creation failed: {e}")
+            raise BadRequestError(f"User creation failed: {str(e)}")
         
         return {
             "message": "User registered successfully",

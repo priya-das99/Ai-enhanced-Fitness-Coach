@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    docs_url=f"{settings.API_V1_PREFIX}/docs",
-    redoc_url=f"{settings.API_V1_PREFIX}/redoc",
+    docs_url=f"{settings.API_V1_PREFIX}/docs",  # Move docs to /api/v1/docs
+    redoc_url=f"{settings.API_V1_PREFIX}/redoc",  # Move redoc to /api/v1/redoc
     openapi_url=f"{settings.API_V1_PREFIX}/openapi.json"
 )
 
@@ -36,6 +36,35 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+# Define root route FIRST to ensure priority
+@app.get("/", include_in_schema=False)
+async def root():
+    """Serve the main landing page"""
+    from fastapi.responses import FileResponse
+    import os
+    
+    # Get the project root index.html
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    backend_dir = os.path.dirname(current_dir)
+    project_root = os.path.dirname(backend_dir)
+    index_path = os.path.join(project_root, "index.html")
+    
+    print(f"[ROOT] Looking for index.html at: {index_path}")
+    print(f"[ROOT] File exists: {os.path.exists(index_path)}")
+    
+    if os.path.exists(index_path):
+        print("[ROOT] Serving index.html from project root")
+        return FileResponse(index_path)
+    else:
+        print("[ROOT] index.html not found, returning fallback")
+        # Fallback response
+        return {
+            "message": "AI-Enhanced Fitness Coach API",
+            "status": "running",
+            "frontend": "/frontend/login.html",
+            "docs": f"{settings.API_V1_PREFIX}/docs"
+        }
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
@@ -119,29 +148,6 @@ async def shutdown_event():
         logger.info("Scheduler was not available")
     except Exception as e:
         logger.error(f"Error stopping scheduler: {e}")
-
-@app.get("/", include_in_schema=False)
-async def root():
-    """Serve the main landing page"""
-    from fastapi.responses import FileResponse
-    import os
-    
-    # Get the project root index.html
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    backend_dir = os.path.dirname(current_dir)
-    project_root = os.path.dirname(backend_dir)
-    index_path = os.path.join(project_root, "index.html")
-    
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-    else:
-        # Fallback response
-        return {
-            "message": "AI-Enhanced Fitness Coach API",
-            "status": "running",
-            "frontend": "/frontend/login.html",
-            "docs": "/docs"
-        }
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
