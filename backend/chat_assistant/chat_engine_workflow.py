@@ -29,7 +29,8 @@ class ChatEngineWorkflow:
     """
     
     def __init__(self):
-        self.registry = WorkflowRegistry()
+        from .workflow_registry import get_registry
+        self.registry = get_registry()  # Use global singleton registry
         self.llm_service = get_llm_service()
         self.enable_multi_intent = True  # Phase 3: Multi-intent support
         self.enable_validation = True  # Phase 3: Response validation

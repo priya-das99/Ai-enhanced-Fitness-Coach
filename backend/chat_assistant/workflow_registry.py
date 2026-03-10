@@ -34,17 +34,10 @@ class WorkflowRegistry:
         
         try:
             from .mood_workflow import MoodWorkflow
-            print("[DEBUG] MoodWorkflow imported successfully")
             mood_wf = MoodWorkflow()
-            print(f"[DEBUG] MoodWorkflow instance created: {mood_wf.workflow_name}")
-            print(f"[DEBUG] MoodWorkflow handled_intents: {mood_wf.get_handled_intents()}")
             self.register(mood_wf)
-            print("[DEBUG] MoodWorkflow registered successfully")
             logger.info("Auto-registered MoodWorkflow")
         except Exception as e:
-            print(f"[DEBUG] ❌ Failed to register MoodWorkflow: {e}")
-            import traceback
-            traceback.print_exc()
             logger.warning(f"Could not register MoodWorkflow: {e}")
         
         try:
@@ -109,16 +102,11 @@ class WorkflowRegistry:
         Returns:
             Workflow instance or None
         """
-        print(f"[DEBUG] Looking for workflow for intent: '{intent}'")
-        print(f"[DEBUG] Available intents: {list(self.intent_to_workflow.keys())}")
-        
         workflow_name = self.intent_to_workflow.get(intent)
         if workflow_name:
             workflow = self.workflows.get(workflow_name)
-            print(f"[DEBUG] Found workflow '{workflow_name}' for intent '{intent}'")
             return workflow
         else:
-            print(f"[DEBUG] No workflow found for intent '{intent}'")
             logger.warning(f"No workflow registered for intent: {intent}")
             return None
     
