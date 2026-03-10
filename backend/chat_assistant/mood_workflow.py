@@ -115,11 +115,13 @@ class MoodWorkflow(BaseWorkflow):
         # If button click, check if mood already logged today (unless override requested)
         if is_button_click and has_logged_mood_today(user_id) and not is_log_again_request:
             logger.info(f"User {user_id} already logged mood today")
+            # Start workflow first, then update data
+            state.start_workflow(self.workflow_name, {'step': 'asking_mood'})
             return WorkflowResponse(
-                message="You've already logged your mood today! 😊\n\nWant to log it again anyway?  Select a mood below.",
-                completed=True,
-                next_state=ConversationState.IDLE,
-                ui_elements=['emoji_selector'],  # Show mood selector for easy override
+                message="You've already logged your mood today! 😊\n\nWant to log it again anyway? Select a mood below:",
+                completed=False,  # Keep workflow active to handle emoji selection
+                next_state=ConversationState.WORKFLOW_ACTIVE,
+                ui_elements=['emoji_selector'],
                 extra_data={}
             )
         
@@ -127,11 +129,12 @@ class MoodWorkflow(BaseWorkflow):
         if is_log_again_request:
             logger.info(f"User {user_id} requested to log mood again - allowing override")
             # Show mood selector to let them log again
-            # Use completed=True so the workflow doesn't stay active
+            # Start workflow first, then update data
+            state.start_workflow(self.workflow_name, {'step': 'asking_mood'})
             return WorkflowResponse(
                 message="Sure! How are you feeling now? 😊",
-                completed=True,  # Complete the workflow, mood selector will trigger new one
-                next_state=ConversationState.IDLE,
+                completed=False,  # Keep workflow active to handle emoji selection
+                next_state=ConversationState.WORKFLOW_ACTIVE,
                 ui_elements=['emoji_selector'],
                 extra_data={}
             )
@@ -323,17 +326,30 @@ class MoodWorkflow(BaseWorkflow):
         # Accept both high and low confidence extractions
         if mood_emoji:
             logger.info(f"Extracted mood from message: {mood_emoji} (confidence: {confidence})")
+            
+            # NEW: Try to extract reason from the same message
+            extracted_reason = None
+            if not is_button_click and not is_intent_only:
+                # Try to extract both mood and reason together
+                from .mood_reason_extractor import extract_mood_and_reason
+                combined = extract_mood_and_reason(message)
+                
+                if combined['reason'] and combined['confidence'] == 'high':
+                    extracted_reason = combined['reason']
+                    logger.info(f"✅ Extracted reason from message: '{extracted_reason}'")
+            
             # Start workflow with extracted mood
             state.start_workflow(self.workflow_name, {
                 'mood_emoji': mood_emoji,
                 'step': 'mood_selected',
-                'original_message': message
+                'original_message': message,
+                'extracted_reason': extracted_reason  # Store extracted reason
             })
             
             # Check if positive or negative
             if is_positive_mood(mood_emoji):
                 # Positive mood - log and complete immediately
-                mood_log = save_mood_log(user_id, mood_emoji, reason=None)
+                mood_log = save_mood_log(user_id, mood_emoji, reason=extracted_reason)
                 
                 # Phase 2: Emit event after successful save
                 try:
@@ -342,7 +358,7 @@ class MoodWorkflow(BaseWorkflow):
                     publisher.publish_mood_logged(
                         user_id=str(user_id),
                         mood_emoji=mood_emoji,
-                        reason=None,
+                        reason=extracted_reason,
                         mood_value=get_mood_value(mood_emoji)
                     )
                     logger.info(f"📊 Published mood_logged event for user {user_id}")
@@ -353,7 +369,59 @@ class MoodWorkflow(BaseWorkflow):
                 state.complete_workflow()
                 return self._create_positive_mood_response(mood_emoji)
             else:
-                # Negative mood - check if we should ask for reason
+                # Negative mood - check if we already have a reason
+                if extracted_reason:
+                    # We have both mood and reason! Skip asking and show suggestions directly
+                    logger.info(f"✅ Have both mood and reason, showing suggestions directly")
+                    
+                    # Save mood with reason
+                    mood_log = save_mood_log(user_id, mood_emoji, reason=extracted_reason)
+                    
+                    # Emit event
+                    try:
+                        from app.services.event_publisher import get_event_publisher
+                        publisher = get_event_publisher()
+                        publisher.publish_mood_logged(
+                            user_id=str(user_id),
+                            mood_emoji=mood_emoji,
+                            reason=extracted_reason,
+                            mood_value=get_mood_value(mood_emoji)
+                        )
+                        logger.info(f"📊 Published mood_logged event for user {user_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to publish mood_logged event: {e}")
+                    
+                    # Get suggestions based on the extracted reason
+                    context = build_context(user_id)
+                    suggestions = get_smart_suggestions(mood_emoji, extracted_reason, context, count=3)
+                    
+                    if suggestions:
+                        # MULTI-INTENT FIX: Complete workflow immediately to allow secondary workflows
+                        # Don't update workflow step since we're completing
+                        state.complete_workflow()
+                        
+                        # Show suggestions with completed=True
+                        return WorkflowResponse(
+                            message=f"Here are some activities that might help with {extracted_reason}:",
+                            ui_elements=['action_buttons_multiple'],
+                            actions=suggestions,
+                            completed=True,  # ✅ Allow secondary workflows to execute
+                            next_state=ConversationState.IDLE,
+                            extra_data={
+                                'events': [{'type': 'mood_logged', 'mood': mood_emoji, 'reason': extracted_reason}],
+                                'ranking_context_id': context.get('ranking_context_id')
+                            }
+                        )
+                    else:
+                        # No suggestions, just acknowledge
+                        state.complete_workflow()
+                        return WorkflowResponse(
+                            message="I understand. I'm here if you need anything.",
+                            completed=True,
+                            next_state=ConversationState.IDLE
+                        )
+                
+                # No extracted reason - check if we should ask for reason
                 if should_ask_reason(mood_emoji=mood_emoji, mood_text=message):
                     # Ask for reason (emotional negative)
                     reasons = get_mood_reasons()
@@ -1089,3 +1157,21 @@ class MoodWorkflow(BaseWorkflow):
             ui_elements=[],  # NO buttons - mood already logged
             extra_data={}
         )
+    
+    def _update_session_summary(self, state: WorkflowState, mood_emoji: str):
+        """
+        Update session summary after mood logging
+        
+        Args:
+            state: Workflow state with session summary
+            mood_emoji: Mood emoji that was logged
+        """
+        from .session_summary import SessionFocus
+        
+        # Set focus to mood
+        state.session_summary.set_focus(SessionFocus.MOOD)
+        
+        # Store the logged mood as preference for potential follow-ups
+        state.session_summary.set_preference('last_mood', mood_emoji)
+        
+        logger.info(f"Updated session summary: {state.session_summary}")

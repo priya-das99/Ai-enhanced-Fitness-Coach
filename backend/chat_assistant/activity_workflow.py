@@ -6,6 +6,7 @@ from typing import Optional
 from .workflow_base import BaseWorkflow, WorkflowResponse
 from .unified_state import WorkflowState, ConversationState
 from .activity_intent_detector import ActivityIntentDetector
+from .activity_validator import ActivityValidator
 from .health_activity_logger import HealthActivityLogger
 import logging
 import sys
@@ -37,6 +38,7 @@ class ActivityWorkflow(BaseWorkflow):
         )
         self.intent_detector = ActivityIntentDetector()
         self.activity_logger = HealthActivityLogger()
+        self.validator = ActivityValidator()
     
     def start(self, message: str, state: WorkflowState, user_id: int) -> WorkflowResponse:
         """Start activity logging workflow"""
@@ -131,7 +133,38 @@ class ActivityWorkflow(BaseWorkflow):
                         ui_elements=['text_input']
                     )
         
-        # Have all info - log immediately
+        # Have all info - validate first, then log immediately
+        validation_result = self.validator.validate_activity_input(activity['activity_type'], activity['value'])
+        
+        if not validation_result['valid']:
+            # Invalid input - ask for clarification
+            state.start_workflow(self.workflow_name, {
+                'activity_type': activity['activity_type'],
+                'unit': activity['unit'],
+                'notes': activity.get('notes', '')
+            })
+            
+            return self._ask_clarification(
+                message=validation_result['message'],
+                ui_elements=['text_input']
+            )
+        
+        if validation_result.get('needs_confirmation'):
+            # Unusual value - ask for confirmation
+            state.start_workflow(self.workflow_name, {
+                'activity_type': activity['activity_type'],
+                'unit': activity['unit'],
+                'pending_value': activity['value'],
+                'awaiting_validation_confirmation': True,
+                'notes': activity.get('notes', '')
+            })
+            
+            return self._ask_confirmation(
+                message=validation_result['message'],
+                ui_elements=['yes_no_buttons']
+            )
+        
+        # Validation passed - log immediately
         try:
             self.activity_logger.log_activity(
                 user_id=user_id,
@@ -166,7 +199,12 @@ class ActivityWorkflow(BaseWorkflow):
             except Exception as e:
                 logger.warning(f"Failed to publish event or update metrics: {e}")
             
-            return self._complete_workflow(
+            # Keep workflow active for potential follow-ups (e.g., "log more water")
+            state.set_workflow_data('last_logged_activity', activity['activity_type'])
+            state.set_workflow_data('last_logged_unit', activity['unit'])
+            state.set_workflow_data('awaiting_followup', True)
+            
+            return WorkflowResponse(
                 message=self._create_activity_response({
                     'activity_type': activity['activity_type'],
                     'value': activity['value'],
@@ -174,6 +212,8 @@ class ActivityWorkflow(BaseWorkflow):
                     'user_id': user_id
                 }),
                 ui_elements=[],  # No buttons - keep chat clean
+                completed=False,  # Keep workflow active!
+                next_state=ConversationState.WORKFLOW_ACTIVE,
                 events=[{'type': 'activity_logged', 'activity_type': activity['activity_type'], 'value': activity['value'], 'unit': activity['unit']}]
             )
         
@@ -183,40 +223,7 @@ class ActivityWorkflow(BaseWorkflow):
                 message="Sorry, I couldn't log that activity."
             )
     
-    def _handle_button_click(self, message: str, state: WorkflowState, user_id: int) -> WorkflowResponse:
-        """Handle button clicks like log_water, log_sleep, etc."""
-        # Map button IDs to activity types
-        button_to_activity = {
-            'log_water': 'water',
-            'log_sleep': 'sleep',
-            'log_exercise': 'exercise',
-            'log_weight': 'weight'
-        }
-        
-        message_lower = message.lower().strip()
-        activity_type = button_to_activity.get(message_lower)
-        
-        if not activity_type:
-            # Unknown button, treat as regular message
-            return self._complete_workflow(
-                message="I didn't understand that. Please try again."
-            )
-        
-        # Get unit for this activity type
-        unit = self.activity_logger.ACTIVITY_TYPES[activity_type]['unit']
-        
-        # Start workflow and ask for quantity
-        state.start_workflow(self.workflow_name, {
-            'activity_type': activity_type,
-            'unit': unit,
-            'notes': f'Button: {message}'
-        })
-        
-        return self._ask_clarification(
-            message=self._get_clarification_message(activity_type),
-            ui_elements=['text_input']
-        )
-    
+
     def _handle_external_activity_button(self, message: str, state: WorkflowState, user_id: int) -> WorkflowResponse:
         """
         Handle external activity buttons like start_content_4, start_meditation, etc.
@@ -251,6 +258,106 @@ class ActivityWorkflow(BaseWorkflow):
     
     def process(self, message: str, state: WorkflowState, user_id: int) -> WorkflowResponse:
         """Process message in active activity workflow"""
+        
+        # NEW: Handle follow-up requests after successful logging
+        awaiting_followup = state.get_workflow_data('awaiting_followup', False)
+        
+        if awaiting_followup:
+            last_activity = state.get_workflow_data('last_logged_activity')
+            last_unit = state.get_workflow_data('last_logged_unit')
+            
+            # Check if user wants to log more of the same activity
+            message_lower = message.lower().strip()
+            
+            if any(phrase in message_lower for phrase in ['log more', 'more', 'add more', 'another', 'again']):
+                # User wants to log more of the same activity
+                logger.info(f"User wants to log more {last_activity}")
+                
+                # Clear follow-up state and restart the same activity workflow
+                state.set_workflow_data('awaiting_followup', False)
+                state.set_workflow_data('activity_type', last_activity)
+                state.set_workflow_data('unit', last_unit)
+                state.set_workflow_data('notes', f'Follow-up: {message}')
+                
+                return self._ask_clarification(
+                    message=self._get_clarification_message(last_activity),
+                    ui_elements=['text_input']
+                )
+            
+            elif any(phrase in message_lower for phrase in ['no', 'done', 'finished', 'that\'s all', 'enough']):
+                # User is done logging
+                logger.info(f"User finished logging {last_activity}")
+                return self._complete_workflow(
+                    message="Great! Keep up the good work! 💪"
+                )
+            
+            else:
+                # User said something else - try to detect if it's a quantity for the same activity
+                value = self.intent_detector.extract_number(message)
+                
+                if value is not None:
+                    # User provided a number - assume they want to log more of the same activity
+                    logger.info(f"User provided quantity {value} for follow-up {last_activity}")
+                    
+                    # Validate the input
+                    validation_result = self.validator.validate_activity_input(last_activity, value)
+                    
+                    if not validation_result['valid']:
+                        return self._ask_clarification(
+                            message=validation_result['message'],
+                            ui_elements=['text_input']
+                        )
+                    
+                    if validation_result.get('needs_confirmation'):
+                        state.set_workflow_data('pending_value', value)
+                        state.set_workflow_data('awaiting_validation_confirmation', True)
+                        state.set_workflow_data('awaiting_followup', False)
+                        
+                        return self._ask_confirmation(
+                            message=validation_result['message'],
+                            ui_elements=['yes_no_buttons']
+                        )
+                    
+                    # Valid input - log it
+                    try:
+                        self.activity_logger.log_activity(
+                            user_id=user_id,
+                            activity_type=last_activity,
+                            value=value,
+                            unit=last_unit,
+                            notes=f"Follow-up: {message}"
+                        )
+                        
+                        logger.info(f"Logged follow-up {last_activity}: {value} {last_unit}")
+                        
+                        # Keep workflow active for more follow-ups
+                        return WorkflowResponse(
+                            message=self._create_activity_response({
+                                'activity_type': last_activity,
+                                'value': value,
+                                'unit': last_unit,
+                                'user_id': user_id
+                            }),
+                            ui_elements=[],
+                            completed=False,  # Keep active for more follow-ups
+                            next_state=ConversationState.WORKFLOW_ACTIVE
+                        )
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to log follow-up activity: {e}")
+                        return self._complete_workflow(
+                            message="Sorry, I couldn't log that activity."
+                        )
+                
+                else:
+                    # No number detected - complete workflow and let other workflows handle it
+                    logger.info(f"No follow-up detected, completing workflow")
+                    state.complete_workflow()
+                    
+                    # Let the message be processed by other workflows
+                    from .chat_engine_workflow import ChatEngineWorkflow
+                    chat_engine = ChatEngineWorkflow()
+                    return chat_engine.start(message, state, user_id)
         
         # Check if we're waiting for user to return from external activity
         awaiting_return = state.get_workflow_data('awaiting_return', False)
@@ -321,6 +428,39 @@ class ActivityWorkflow(BaseWorkflow):
         activity_type = state.get_workflow_data('activity_type')
         unit = state.get_workflow_data('unit')
         notes = state.get_workflow_data('notes')
+        
+        # Check if we're awaiting validation confirmation
+        awaiting_validation_confirmation = state.get_workflow_data('awaiting_validation_confirmation', False)
+        
+        if awaiting_validation_confirmation:
+            # User is responding to validation warning (e.g., "15 glasses is quite high, are you sure?")
+            message_lower = message.lower().strip()
+            
+            if message_lower in ['yes', 'y', 'yeah', 'yep', 'sure', 'ok', 'okay']:
+                # User confirmed - proceed with the pending value
+                pending_value = state.get_workflow_data('pending_value')
+                state.set_workflow_data('awaiting_validation_confirmation', False)
+                
+                if pending_value:
+                    return self._log_activity_with_validation(user_id, activity_type, pending_value, unit, notes, state)
+                else:
+                    # No pending value - ask again
+                    return self._ask_clarification(
+                        message=self._get_clarification_message(activity_type),
+                        ui_elements=['text_input']
+                    )
+            else:
+                # User declined - ask for a different value
+                state.set_workflow_data('awaiting_validation_confirmation', False)
+                
+                # Provide helpful guidance about typical ranges
+                guidance = self.validator.get_typical_range_message(activity_type)
+                message = f"No problem! {guidance} Please enter a different amount:"
+                
+                return self._ask_clarification(
+                    message=message,
+                    ui_elements=['text_input']
+                )
         
         # Check if we're awaiting duplicate confirmation
         awaiting_confirmation = state.get_workflow_data('awaiting_duplicate_confirmation', False)
@@ -404,17 +544,41 @@ class ActivityWorkflow(BaseWorkflow):
                 ui_elements=['text_input']
             )
         
-        # Got quantity - log activity
+        # NEW: Validate the input using comprehensive validation system
+        validation_result = self.validator.validate_activity_input(activity_type, value)
+        
+        if not validation_result['valid']:
+            # Invalid input - ask again with helpful guidance
+            return self._ask_clarification(
+                message=validation_result['message'],
+                ui_elements=['text_input']
+            )
+        
+        if validation_result.get('needs_confirmation'):
+            # Unusual value - ask for confirmation
+            state.set_workflow_data('pending_value', value)
+            state.set_workflow_data('awaiting_validation_confirmation', True)
+            
+            return self._ask_confirmation(
+                message=validation_result['message'],
+                ui_elements=['yes_no_buttons']
+            )
+        
+        # Valid input - proceed with logging
+        return self._log_activity_with_validation(user_id, activity_type, value, unit, notes, state)
+    
+    def _log_activity_with_validation(self, user_id: int, activity_type: str, value: float, unit: str, notes: str, state) -> WorkflowResponse:
+        """Log activity after validation has passed"""
         try:
             self.activity_logger.log_activity(
                 user_id=user_id,
                 activity_type=activity_type,
                 value=value,
                 unit=unit,
-                notes=f"{notes} - {message}"
+                notes=f"{notes} - validated"
             )
             
-            logger.info(f"Logged {activity_type}: {value} {unit}")
+            logger.info(f"Logged {activity_type}: {value} {unit} (validated)")
             
             # Update session summary
             self._update_session_summary(state, activity_type, unit)
@@ -439,7 +603,12 @@ class ActivityWorkflow(BaseWorkflow):
             except Exception as e:
                 logger.warning(f"Failed to publish event or update metrics: {e}")
             
-            return self._complete_workflow(
+            # Keep workflow active for potential follow-ups (e.g., "log more water")
+            state.set_workflow_data('last_logged_activity', activity_type)
+            state.set_workflow_data('last_logged_unit', unit)
+            state.set_workflow_data('awaiting_followup', True)
+            
+            return WorkflowResponse(
                 message=self._create_activity_response({
                     'activity_type': activity_type,
                     'value': value,
@@ -447,6 +616,8 @@ class ActivityWorkflow(BaseWorkflow):
                     'user_id': user_id
                 }),
                 ui_elements=[],  # No buttons - keep chat clean
+                completed=False,  # Keep workflow active!
+                next_state=ConversationState.WORKFLOW_ACTIVE,
                 events=[{'type': 'activity_logged', 'activity_type': activity_type, 'value': value, 'unit': unit}]
             )
         
@@ -462,29 +633,35 @@ class ActivityWorkflow(BaseWorkflow):
             from .llm_service import get_llm_service
             llm = get_llm_service()
             
-            # Create a natural prompt for the LLM
+            # Get the expected unit for this activity type
+            expected_unit = self.activity_logger.ACTIVITY_TYPES.get(activity_type, {}).get('unit', activity_type)
+            
+            # Create a natural prompt for the LLM with the specific unit
             prompt = f"""Generate a friendly, conversational question asking the user how much {activity_type} they want to log.
 
 Activity type: {activity_type}
+Expected unit: {expected_unit}
 
 Requirements:
 - Keep it short and friendly (1 sentence)
 - Use natural language
 - Be encouraging
 - Don't use emojis
+- MUST use the expected unit: {expected_unit}
 
 Examples:
-- For water: "How many glasses of water did you drink?"
-- For sleep: "How many hours did you sleep last night?"
-- For exercise: "How long did you exercise for?"
-- For weight: "What's your current weight?"
+- For water (glasses): "How many glasses of water did you drink?"
+- For sleep (hours): "How many hours did you sleep last night?"
+- For exercise (minutes): "How many minutes did you exercise?"
+- For weight (kg): "What's your current weight in kg?"
 
-Generate the question:"""
+Generate the question using the unit "{expected_unit}":"""
             
-            response = llm.generate_response(
-                user_message=prompt,
-                conversation_history=[],
-                system_context="You are a friendly wellness assistant helping users log their health activities."
+            response = llm.call(
+                prompt=prompt,
+                system_message="You are a friendly wellness assistant helping users log their health activities. Always use the specified unit in your questions.",
+                max_tokens=50,
+                temperature=0.3
             )
             
             # Extract just the question from the response
@@ -549,28 +726,29 @@ Generate the question:"""
                 message="I didn't understand that. Please try again."
             )
         
-        # Check if user already logged this activity recently (today)
-        recent_log = self._check_recent_activity(user_id, activity_type)
-        
-        if recent_log:
-            # User already logged this activity today
-            activity_name = activity_type.capitalize()
-            value = recent_log['value']
-            unit = recent_log['unit']
+        # For water, allow multiple logs per day without asking
+        # For other activities, check for duplicates
+        if activity_type != 'water':
+            recent_log = self._check_recent_activity(user_id, activity_type)
             
-            # Store in state for confirmation flow
-            state.start_workflow(self.workflow_name, {
-                'activity_type': activity_type,
-                'unit': unit,
-                'notes': f'Button: {button_id}',
-                'awaiting_duplicate_confirmation': True,
-                'previous_value': value
-            })
-            
-            return self._ask_confirmation(
-                message=f"I see you already logged {value} {unit} of {activity_type} today. Would you like to log more?",
-                ui_elements=['yes_no_buttons']
-            )
+            if recent_log:
+                # User already logged this activity today
+                value = recent_log['value']
+                unit = recent_log['unit']
+                
+                # Store in state for confirmation flow
+                state.start_workflow(self.workflow_name, {
+                    'activity_type': activity_type,
+                    'unit': unit,
+                    'notes': f'Button: {button_id}',
+                    'awaiting_duplicate_confirmation': True,
+                    'previous_value': value
+                })
+                
+                return self._ask_confirmation(
+                    message=f"I see you already logged {value} {unit} of {activity_type} today. Would you like to log more?",
+                    ui_elements=['yes_no_buttons']
+                )
         
         # Get unit for this activity type
         unit = self.activity_logger.ACTIVITY_TYPES[activity_type]['unit']
@@ -711,14 +889,14 @@ confidence=0.85"""}
 
     def _create_activity_response(self, activity: dict) -> str:
         """
-        Create motivational activity response message using LLM
-        Shows daily total for cumulative activities like water
+        Create simple, clean activity response message
+        No suggestions, just confirmation
         
         Args:
             activity: Dict with activity_type, value, unit, user_id (optional)
             
         Returns:
-            Formatted response message with daily total
+            Simple confirmation message
         """
         activity_type = activity['activity_type']
         value = activity['value']
@@ -739,7 +917,7 @@ confidence=0.85"""}
                     if a['activity_type'] == activity_type
                 )
                 
-                # Format daily_total nicely too
+                # Format daily_total nicely too (remove .0 for whole numbers)
                 if isinstance(daily_total, float) and daily_total.is_integer():
                     daily_total = int(daily_total)
                 
@@ -747,143 +925,15 @@ confidence=0.85"""}
             except Exception as e:
                 logger.warning(f"Could not get daily total: {e}")
         
-        # Use LLM to generate natural, context-aware response
-        try:
-            from chat_assistant.llm_service import get_llm_service
-            llm_service = get_llm_service()
-            
-            # Build context for LLM
-            if daily_total and daily_total > value:
-                context = f"User just logged: {value} {unit} of {activity_type}. Daily total so far: {daily_total} {unit}"
-            else:
-                context = f"User logged: {value} {unit} of {activity_type}"
-            
-            # Add health context based on values
-            health_notes = []
-            check_value = daily_total if daily_total else value
-            
-            if activity_type == 'sleep':
-                if check_value < 6:
-                    health_notes.append("This is below the recommended 7-8 hours")
-                elif check_value >= 7 and check_value <= 9:
-                    health_notes.append("This is in the ideal range of 7-9 hours")
-            elif activity_type == 'water':
-                if check_value < 4:
-                    health_notes.append("Below the recommended 8 glasses daily")
-                elif check_value >= 8:
-                    health_notes.append("Great! You've hit the daily goal")
-            elif activity_type == 'exercise':
-                if check_value < 15:
-                    health_notes.append("This is a short session")
-                elif check_value >= 30:
-                    health_notes.append("This meets the recommended 30 minutes daily")
-            
-            if health_notes:
-                context += f". {health_notes[0]}"
-            
-            prompt = f"""You are MoodCapture, a supportive wellness assistant.
-
-User just logged an activity:
-- Activity: {activity_type}
-- Amount logged now: {value} {unit}
-{f"- Daily total so far: {daily_total} {unit}" if daily_total and daily_total > value else ""}
-{f"- Note: {health_notes[0]}" if health_notes else ""}
-
-Generate a brief, natural response (1-2 sentences max).
-
-Guidelines:
-- Be warm and conversational, like a friend
-- If there's a daily total, mention it naturally (e.g., "That's 5 glasses today!")
-- If the value is concerning (like low sleep), show gentle concern
-- If the value is good, celebrate it naturally
-- Use ONE relevant emoji
-- Sound human and casual, not robotic
-- Vary your phrasing - avoid templates
-- DO NOT ask if they want to log another activity
-
-Examples:
-- For 2 glasses water (5 total today): "2 more glasses! That's 5 today. 💧"
-- For 3 glasses water (3 total): "3 glasses down! 💧"
-- For 5 hours sleep: "Only 5 hours? That's rough. 😟 Try to get more rest tonight!"
-- For 8 hours sleep: "Nice! 8 hours is perfect. 😴"
-- For 30 min exercise: "30 minutes! That's awesome! 💪"
-
-Response:"""
-            
-            message = llm_service.call(
-                prompt=prompt,
-                system_message="You are a supportive wellness assistant. Be encouraging, casual, and human.",
-                temperature=0.8,  # Higher for more variety
-                max_tokens=60
-            )
-            
-            logger.info(f"🤖 LLM generated activity response: {message[:50]}...")
-            
-        except Exception as e:
-            logger.warning(f"LLM response generation failed, using fallback: {e}")
-            # Fallback to template-based responses
-            emoji_map = {'water': '💧', 'sleep': '😴', 'exercise': '�', 'weight': '⚖️'}
-            emoji = emoji_map.get(activity_type, '✅')
-            
-            if activity_type == 'sleep' and value < 6:
-                message = f"Only {value} {unit}? Try to get more rest tonight! 😟"
-            elif activity_type == 'water' and value >= 8:
-                message = f"Great job staying hydrated! {emoji}"
-            elif activity_type == 'exercise' and value >= 30:
-                message = f"{value} minutes! That's awesome! {emoji}"
-            else:
-                message = f"{value} {unit} logged! {emoji}"
+        # Create simple, clean response without LLM
+        emoji_map = {'water': '💧', 'sleep': '😴', 'exercise': '💪', 'weight': '⚖️'}
+        emoji = emoji_map.get(activity_type, '✅')
         
-        # Try to get challenge progress
-        try:
-            from app.services.challenge_service import ChallengeService
-            challenge_service = ChallengeService()
-            
-            # Get user's active challenges for this activity type
-            user_id = activity.get('user_id')
-            if user_id:
-                challenges = challenge_service.get_user_challenges(user_id)
-                
-                challenge_updates = []
-                for challenge in challenges:
-                    if challenge.get('challenge_type') == activity_type:
-                        progress = challenge.get('progress', 0)
-                        title = challenge.get('title', '')
-        
-        # ===== ADD STREAK CELEBRATION =====
-        # Check for activity streak
-        if user_id:
-            try:
-                from app.services.pattern_detector import PatternDetector
-                pattern_detector = PatternDetector()
-                patterns = pattern_detector.detect_all_patterns(user_id)
-                
-                streak = patterns['activity_patterns']['streak']
-                
-                # Celebrate streaks of 3+ days
-                if streak >= 3:
-                    if streak >= 7:
-                        message += f"\n\n🔥 That's {streak} days in a row! You're on fire!"
-                    elif streak >= 5:
-                        message += f"\n\n🔥 {streak}-day streak! Keep it going!"
-                    else:
-                        message += f"\n\n🔥 {streak} days in a row!"
-                    
-                    logger.info(f"🔥 Celebrated {streak}-day streak for user {user_id}")
-            except Exception as e:
-                logger.warning(f"Could not check streak: {e}")
-        # ==================================
-                    
-                    if progress >= 100:
-                        challenge_updates.append(f"🎉 Challenge completed: {title}!")
-                    else:
-                        challenge_updates.append(f"📊 {title}: {progress:.0f}%")
-            
-            if challenge_updates:
-                message += "\n\n" + "\n".join(challenge_updates)
-                
-        except Exception as e:
-            logger.warning(f"Could not get challenge progress: {e}")
+        # Simple confirmation message
+        if daily_total and daily_total > value:
+            message = f"{value} {unit} logged! That's {daily_total} {unit} today. {emoji}"
+        else:
+            message = f"{value} {unit} logged! {emoji}"
         
         return message
     

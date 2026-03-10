@@ -78,6 +78,25 @@ class ChatEngineWorkflow:
         
         logger.info(f"Current state: {workflow_state.state.value}, Active workflow: {workflow_state.active_workflow}")
         
+        # ===== UNIVERSAL CONTEXT CHECK (NEW) =====
+        # Check if this is a follow-up to recent activity using session summary
+        if workflow_state.is_idle():  # Only check if no active workflow
+            from .universal_context_handler import get_universal_context_handler
+            context_handler = get_universal_context_handler()
+            
+            if context_handler.can_handle_followup(message, workflow_state):
+                logger.info(f"[Universal Context] Handling follow-up request: '{message}'")
+                followup_response = context_handler.handle_followup(message, workflow_state, user_id)
+                
+                if followup_response:
+                    # Store messages in conversation history
+                    workflow_state.add_message('user', message)
+                    workflow_state.add_message('assistant', followup_response.message)
+                    
+                    # Convert to dict format
+                    result = self._convert_response(followup_response, workflow_state, 'universal_context', user_id)
+                    return result
+        
         # Load conversation history from database if in-memory is empty (after restart/login)
         if len(workflow_state.conversation_history) == 0:
             try:
@@ -144,8 +163,8 @@ class ChatEngineWorkflow:
         is_external_content_button = message_lower.startswith('start_content_')
         is_activity_start_button = message_lower.startswith('start_') and not is_external_content_button
         
-        # Also check for "I want to log_X" pattern from activity buttons
-        if not is_button_click and message_lower.startswith('i_want_to_log_'):
+        # Check for exact "I want to log X" patterns (more precise)
+        if not is_button_click and message_lower in ['i_want_to_log_water', 'i_want_to_log_sleep', 'i_want_to_log_exercise', 'i_want_to_log_weight', 'i_want_to_log_mood']:
             is_button_click = True
             # Extract the actual button ID (e.g., "i_want_to_log_mood" -> "log_mood")
             message_lower = message_lower.replace('i_want_to_', '')
