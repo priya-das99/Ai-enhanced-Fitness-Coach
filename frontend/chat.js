@@ -1,5 +1,5 @@
-// Configuration
-const API_BASE_URL = 'http://localhost:8000/api/v1';
+// Configuration - Load from config.js
+const API_BASE_URL = window.API_CONFIG?.API_BASE_URL || 'http://localhost:8000/api/v1';
 let currentUser = null;
 
 // Helper function to get auth headers
@@ -35,6 +35,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (currentUser) {
         initializeChat();
         setupEventListeners();
+        
+        // Start notification polling after user is authenticated
+        if (typeof startNotificationPolling === 'function') {
+            console.log('🔔 Starting notification polling for user:', currentUser.username);
+            startNotificationPolling();
+        } else {
+            console.log('⚠️ Notification polling function not found - system_notifications.js may not be loaded');
+        }
         
         // Check if returning from module
         if (typeof checkModuleCompletion === 'function') {
