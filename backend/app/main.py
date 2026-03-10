@@ -52,20 +52,14 @@ print(f"Backend dir: {backend_dir}")
 print(f"Project root: {project_root}")
 print(f"Frontend dir: {frontend_dir}")
 
-# First, mount frontend directory at /frontend
+# Mount frontend directory at /frontend (this is working)
 if os.path.exists(frontend_dir):
     print(f"✅ Frontend directory found: {frontend_dir}")
     app.mount("/frontend", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 else:
     print(f"❌ Frontend directory not found: {frontend_dir}")
 
-# Then mount project root for index.html and other root files
-if os.path.exists(project_root):
-    print(f"✅ Project root found: {project_root}")
-    # Mount with lower priority (after /frontend)
-    app.mount("/", StaticFiles(directory=project_root, html=True), name="root")
-else:
-    print(f"❌ Project root not found: {project_root}")
+# Don't mount root as static files - we'll handle it with a route instead
 
 
 # ===== LIFECYCLE EVENTS =====
@@ -125,6 +119,29 @@ async def shutdown_event():
         logger.info("Scheduler was not available")
     except Exception as e:
         logger.error(f"Error stopping scheduler: {e}")
+
+@app.get("/", include_in_schema=False)
+async def root():
+    """Serve the main landing page"""
+    from fastapi.responses import FileResponse
+    import os
+    
+    # Get the project root index.html
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    backend_dir = os.path.dirname(current_dir)
+    project_root = os.path.dirname(backend_dir)
+    index_path = os.path.join(project_root, "index.html")
+    
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    else:
+        # Fallback response
+        return {
+            "message": "AI-Enhanced Fitness Coach API",
+            "status": "running",
+            "frontend": "/frontend/login.html",
+            "docs": "/docs"
+        }
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
