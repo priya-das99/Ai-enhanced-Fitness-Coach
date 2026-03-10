@@ -41,16 +41,31 @@ app.add_middleware(
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
 # Mount static files for frontend
-frontend_dir = os.path.join(os.path.dirname(backend_dir), "frontend")
-root_dir = os.path.dirname(backend_dir)
+# Get absolute paths
+current_dir = os.path.dirname(os.path.abspath(__file__))  # app directory
+backend_dir = os.path.dirname(current_dir)  # backend directory  
+project_root = os.path.dirname(backend_dir)  # project root
+frontend_dir = os.path.join(project_root, "frontend")
 
-# Serve root index.html
-if os.path.exists(os.path.join(root_dir, "index.html")):
-    app.mount("/", StaticFiles(directory=root_dir, html=True), name="root")
+print(f"Current dir: {current_dir}")
+print(f"Backend dir: {backend_dir}")
+print(f"Project root: {project_root}")
+print(f"Frontend dir: {frontend_dir}")
 
-# Also serve frontend directory
+# First, mount frontend directory at /frontend
 if os.path.exists(frontend_dir):
+    print(f"✅ Frontend directory found: {frontend_dir}")
     app.mount("/frontend", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+else:
+    print(f"❌ Frontend directory not found: {frontend_dir}")
+
+# Then mount project root for index.html and other root files
+if os.path.exists(project_root):
+    print(f"✅ Project root found: {project_root}")
+    # Mount with lower priority (after /frontend)
+    app.mount("/", StaticFiles(directory=project_root, html=True), name="root")
+else:
+    print(f"❌ Project root not found: {project_root}")
 
 
 # ===== LIFECYCLE EVENTS =====
@@ -115,6 +130,15 @@ async def shutdown_event():
 async def favicon():
     """Return empty response for favicon requests"""
     return Response(status_code=204)
+
+@app.get("/health", include_in_schema=False)
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "message": "AI-Enhanced Fitness Coach API is running",
+        "version": settings.VERSION
+    }
 
 if __name__ == "__main__":
     import uvicorn
