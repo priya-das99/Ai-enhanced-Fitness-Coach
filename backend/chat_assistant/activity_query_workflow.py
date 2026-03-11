@@ -70,6 +70,8 @@ class ActivityQueryWorkflow(BaseWorkflow):
     
     def start(self, message: str, state: WorkflowState, user_id: int) -> WorkflowResponse:
         """Start the workflow - same as process for this workflow"""
+        # Start the workflow in the state
+        state.start_workflow(self.workflow_name, {'step': 'processing_query'})
         return self.process(message, state, user_id)
     
     def can_handle(self, message: str, intent: Optional[str] = None) -> bool:
@@ -264,7 +266,8 @@ Respond ONLY with valid JSON (no markdown, no code blocks):
                 message=f"{encouragement}\n\nHow are you feeling now?",
                 ui_elements=['emoji_selector'],
                 extra_data={},
-                next_state=None
+                completed=True,  # Complete the workflow!
+                next_state=ConversationState.IDLE
             )
         
         # User is asking for suggestions (not starting a specific activity)
@@ -294,9 +297,13 @@ Respond ONLY with valid JSON (no markdown, no code blocks):
         else:
             response_message = f"Here are some activities that might help with {reason}:"
         
+        # Keep workflow active so user can click on activity buttons
+        # Don't complete the workflow - let activity_logging handle the button clicks
+        from .unified_state import ConversationState
         return WorkflowResponse(
             message=response_message,
             ui_elements=['activity_buttons'],
             extra_data={'suggestions': suggestions},
-            next_state=None
+            completed=False,
+            next_state=ConversationState.WORKFLOW_ACTIVE
         )

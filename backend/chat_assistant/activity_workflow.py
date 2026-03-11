@@ -46,6 +46,12 @@ class ActivityWorkflow(BaseWorkflow):
         
         # Check if this is an external content or activity start button (start_content_X, start_meditation, etc.)
         if message.lower().startswith('start_'):
+            # IMPORTANT: If there's an active workflow (like activity_query showing suggestions),
+            # complete it first to avoid context confusion
+            if state.active_workflow and state.active_workflow != self.workflow_name:
+                logger.info(f"[External Activity] Completing active workflow '{state.active_workflow}' before starting external activity")
+                state.complete_workflow()
+            
             return self._handle_external_activity_button(message, state, user_id)
         
         # Check if this is a button click (log_water, log_sleep, etc.)
@@ -81,6 +87,18 @@ class ActivityWorkflow(BaseWorkflow):
         
         # Process first activity (sequential, not parallel)
         activity = activities[0]
+        
+        # CRITICAL FIX: Handle missing unit clarification
+        if activity.get('needs_unit_clarification'):
+            # Activity detected but unit missing - ask for unit
+            state.start_workflow(self.workflow_name, {
+                'activity_type': activity['activity_type'],
+                'pending_value': activity['value'],
+                'awaiting_unit_clarification': True,
+                'notes': activity['notes']
+            })
+            
+            return self._ask_unit_clarification(activity['activity_type'], activity['value'])
         
         # Check for duplicate sleep logging
         if activity['activity_type'] == 'sleep':
@@ -258,6 +276,71 @@ class ActivityWorkflow(BaseWorkflow):
     
     def process(self, message: str, state: WorkflowState, user_id: int) -> WorkflowResponse:
         """Process message in active activity workflow"""
+        
+        # NEW: Handle unit clarification
+        awaiting_unit_clarification = state.get_workflow_data('awaiting_unit_clarification', False)
+        
+        if awaiting_unit_clarification:
+            # User is providing unit information
+            activity_type = state.get_workflow_data('activity_type')
+            pending_value = state.get_workflow_data('pending_value')
+            notes = state.get_workflow_data('notes', '')
+            
+            # Extract unit from user's response
+            detected_unit = self.intent_detector.extract_unit(message)
+            
+            if detected_unit is None:
+                # Still no unit detected - ask again with examples
+                return self._ask_unit_clarification(activity_type, pending_value, show_examples=True)
+            
+            # Validate that the unit is appropriate for this activity
+            if not self.intent_detector.unit_converter.is_valid_unit(activity_type, detected_unit):
+                valid_units = self.intent_detector.unit_converter.get_supported_units(activity_type)
+                return self._ask_clarification(
+                    message=f"'{detected_unit}' is not a valid unit for {activity_type}. Please use one of: {', '.join(valid_units)}",
+                    ui_elements=['text_input']
+                )
+            
+            # Convert to standard unit
+            converted_value, standard_unit = self.intent_detector.unit_converter.convert_to_standard_unit(
+                activity_type, pending_value, detected_unit
+            )
+            
+            # Create conversion message
+            conversion_msg = self.intent_detector.unit_converter.format_conversion_message(
+                pending_value, detected_unit, converted_value, standard_unit
+            )
+            
+            updated_notes = f"{notes} {conversion_msg}" if conversion_msg else notes
+            
+            # Clear unit clarification state
+            state.set_workflow_data('awaiting_unit_clarification', False)
+            
+            # Log the activity with converted values
+            try:
+                self.activity_logger.log_activity(
+                    user_id=user_id,
+                    activity_type=activity_type,
+                    value=converted_value,
+                    unit=standard_unit,
+                    notes=updated_notes
+                )
+                
+                logger.info(f"Logged {activity_type} with unit clarification: {converted_value} {standard_unit}")
+                
+                # Update session summary
+                self._update_session_summary(state, activity_type, standard_unit)
+                
+                return self._complete_workflow(
+                    message=self._create_friendly_response(activity_type, converted_value, standard_unit, conversion_msg),
+                    ui_elements=[]
+                )
+                
+            except Exception as e:
+                logger.error(f"Failed to log activity after unit clarification: {e}")
+                return self._complete_workflow(
+                    message="Sorry, I couldn't log that activity."
+                )
         
         # NEW: Handle follow-up requests after successful logging
         awaiting_followup = state.get_workflow_data('awaiting_followup', False)
@@ -889,14 +972,13 @@ confidence=0.85"""}
 
     def _create_activity_response(self, activity: dict) -> str:
         """
-        Create simple, clean activity response message
-        No suggestions, just confirmation
+        Create friendly, natural activity response message
         
         Args:
             activity: Dict with activity_type, value, unit, user_id (optional)
             
         Returns:
-            Simple confirmation message
+            Natural, friendly confirmation message
         """
         activity_type = activity['activity_type']
         value = activity['value']
@@ -925,17 +1007,30 @@ confidence=0.85"""}
             except Exception as e:
                 logger.warning(f"Could not get daily total: {e}")
         
-        # Create simple, clean response without LLM
+        # Create friendly, natural responses
         emoji_map = {'water': '💧', 'sleep': '😴', 'exercise': '💪', 'weight': '⚖️'}
         emoji = emoji_map.get(activity_type, '✅')
         
-        # Simple confirmation message
-        if daily_total and daily_total > value:
-            message = f"{value} {unit} logged! That's {daily_total} {unit} today. {emoji}"
+        if activity_type == 'water':
+            if daily_total and daily_total > value:
+                return f"Nice! That's {daily_total} glasses today. Stay hydrated! {emoji}"
+            else:
+                return f"Great! {value} glasses logged. Keep it up! {emoji}"
+                
+        elif activity_type == 'weight':
+            return f"Perfect! Weight logged. {emoji}"
+            
+        elif activity_type == 'sleep':
+            return f"Good! {value} hours logged. Rest is important! {emoji}"
+            
+        elif activity_type == 'exercise':
+            if daily_total and daily_total > value:
+                return f"Awesome! That's {daily_total} minutes today. You're crushing it! {emoji}"
+            else:
+                return f"Excellent! {value} minutes logged. Keep moving! {emoji}"
         else:
-            message = f"{value} {unit} logged! {emoji}"
-        
-        return message
+            # Generic fallback
+            return f"Perfect! {value} {unit} logged! {emoji}"
     
     def _get_wellness_suggestions(self, user_id: int) -> list:
         """Get personalized wellness activity suggestions for engagement after logging"""
@@ -992,3 +1087,90 @@ confidence=0.85"""}
             state.session_summary.set_preference('sleep_unit', unit)
         
         logger.info(f"Updated session summary: {state.session_summary}")
+    
+    def _ask_unit_clarification(self, activity_type: str, value: float, show_examples: bool = False) -> WorkflowResponse:
+        """
+        Ask user to clarify the unit for their input
+        
+        Args:
+            activity_type: Type of activity (water, weight, etc.)
+            value: The numeric value they provided
+            show_examples: Whether to show unit examples
+            
+        Returns:
+            WorkflowResponse asking for unit clarification
+        """
+        # Get supported units for this activity
+        supported_units = self.intent_detector.unit_converter.get_supported_units(activity_type)
+        
+        if show_examples:
+            # Second attempt - show examples
+            examples = ", ".join(supported_units[:3])  # Show first 3 units
+            message = f"Please specify the unit for {value}. For example: '{examples}'. What unit did you mean?"
+        else:
+            # First attempt - simple question
+            if activity_type == 'weight':
+                message = f"{value} what? kg or lbs?"
+            elif activity_type == 'water':
+                message = f"{value} what? glasses, liters, or ml?"
+            elif activity_type == 'sleep':
+                message = f"{value} what? hours or minutes?"
+            elif activity_type == 'exercise':
+                message = f"{value} what? minutes or hours?"
+            else:
+                message = f"What unit for {value}? Please specify."
+        
+        return WorkflowResponse(
+            message=message,
+            ui_elements=['text_input'],
+            completed=False,
+            next_state=ConversationState.CLARIFICATION_PENDING
+        )
+    
+    def _create_friendly_response(self, activity_type: str, value: float, unit: str, conversion_msg: str = "") -> str:
+        """
+        Create a friendly, natural response for activity logging
+        
+        Args:
+            activity_type: Type of activity logged
+            value: Converted value
+            unit: Standard unit
+            conversion_msg: Optional conversion message
+            
+        Returns:
+            Natural, friendly response message
+        """
+        # Format value nicely (remove .0 for whole numbers)
+        formatted_value = int(value) if value == int(value) else value
+        
+        # Create natural responses based on activity type
+        if activity_type == 'weight':
+            if conversion_msg:
+                return f"Got it! {conversion_msg}. Weight logged! ⚖️"
+            else:
+                return f"Perfect! {formatted_value} {unit} logged. ⚖️"
+                
+        elif activity_type == 'water':
+            if conversion_msg:
+                return f"Nice! {conversion_msg} of water logged. Stay hydrated! 💧"
+            else:
+                return f"Great! {formatted_value} {unit} logged. Keep it up! 💧"
+                
+        elif activity_type == 'sleep':
+            if conversion_msg:
+                return f"Thanks! {conversion_msg} of sleep logged. Rest is important! 😴"
+            else:
+                return f"Good! {formatted_value} {unit} logged. Sweet dreams! 😴"
+                
+        elif activity_type == 'exercise':
+            if conversion_msg:
+                return f"Awesome! {conversion_msg} of exercise logged. Keep moving! 💪"
+            else:
+                return f"Excellent! {formatted_value} {unit} logged. You're doing great! 💪"
+                
+        else:
+            # Generic fallback
+            if conversion_msg:
+                return f"Got it! {conversion_msg}. Activity logged! ✅"
+            else:
+                return f"Perfect! {formatted_value} {unit} logged. ✅"

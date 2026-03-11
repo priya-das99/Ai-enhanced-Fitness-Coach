@@ -98,6 +98,9 @@ class WorkflowState:
         self.state = ConversationState.WORKFLOW_ACTIVE
         self.active_workflow = workflow_name
         self.workflow_data = initial_data or {}
+        
+        # Track workflow start time for timeout detection
+        self.workflow_data['last_activity_time'] = datetime.now().isoformat()
         self.workflow_step = None
         self.last_updated = datetime.now()
         
@@ -232,6 +235,43 @@ class WorkflowState:
     def should_stop_suggesting(self) -> bool:
         """Check if we should stop suggesting based on rejection count"""
         return self.global_rejection_count >= 2
+    
+    def is_workflow_stale(self, timeout_minutes: int = 5) -> bool:
+        """
+        Check if workflow has been inactive too long
+        
+        Args:
+            timeout_minutes: Minutes of inactivity before workflow is considered stale
+            
+        Returns:
+            True if workflow should be timed out
+        """
+        if not self.active_workflow:
+            return False
+            
+        last_activity_str = self.workflow_data.get('last_activity_time')
+        if not last_activity_str:
+            # No activity time recorded - assume stale
+            return True
+            
+        try:
+            last_activity = datetime.fromisoformat(last_activity_str)
+            elapsed = datetime.now() - last_activity
+            is_stale = elapsed.total_seconds() > (timeout_minutes * 60)
+            
+            if is_stale:
+                logger.info(f"User {self.user_id}: Workflow '{self.active_workflow}' is stale ({elapsed.total_seconds():.0f}s)")
+            
+            return is_stale
+            
+        except (ValueError, TypeError) as e:
+            logger.warning(f"User {self.user_id}: Invalid last_activity_time format: {e}")
+            return True  # Assume stale if we can't parse the time
+    
+    def update_activity_time(self):
+        """Update the last activity time for timeout tracking"""
+        self.workflow_data['last_activity_time'] = datetime.now().isoformat()
+        self.last_updated = datetime.now()
     
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary"""

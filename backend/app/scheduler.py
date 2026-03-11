@@ -12,10 +12,10 @@ scheduler = AsyncIOScheduler()
 
 # ===== REMINDER JOBS =====
 
-@scheduler.scheduled_job('cron', hour=14, minute=30, id='water_reminder')
+@scheduler.scheduled_job('cron', hour=15, minute=0, id='water_reminder')
 async def water_reminder_job():
     """
-    2:30 PM Daily: Send water reminders to users who need them (TESTING)
+    3:00 PM Daily: Send water reminders to users who need them (mid-afternoon check)
     """
     logger.info("🕐 Running water reminder job")
     
@@ -52,10 +52,10 @@ async def water_reminder_job():
     logger.info(f"✅ Water reminder job complete: {sent_count}/{len(active_users)} sent")
 
 
-@scheduler.scheduled_job('cron', hour=10, minute=0, id='mood_reminder')
+@scheduler.scheduled_job('cron', hour=16, minute=0, id='mood_reminder')
 async def mood_reminder_job():
     """
-    10 AM Daily: Remind users to log their mood
+    4 PM Daily: Remind users to log their mood (appears naturally when they open chat)
     """
     logger.info("🕐 Running mood reminder job")
     
@@ -72,7 +72,7 @@ async def mood_reminder_job():
             if result['should_send']:
                 notification_service.send_notification(user_id, {
                     'title': '😊 Mood Check-in',
-                    'message': 'Good morning! How are you feeling today? Take a moment to check in with yourself.',
+                    'message': 'Good evening! How are you feeling today? Take a moment to reflect on your day.',
                     'type': 'reminder',
                     'action_buttons': [
                         {'id': 'log_mood', 'label': '😊 Log Mood'}

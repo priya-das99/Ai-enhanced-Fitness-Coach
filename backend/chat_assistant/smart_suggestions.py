@@ -628,66 +628,55 @@ def _categorize_reason(reason: str) -> list:
     reason_lower = reason.lower()
     categories = []
     
-    # DEBUG: Log what we're checking
-    logger.info(f"[DEBUG _categorize_reason] Input reason: '{reason}' (lower: '{reason_lower}')")
-    logger.info(f"[DEBUG _categorize_reason] Checking if '{reason_lower}' in REASON_CATEGORIES keys: {list(REASON_CATEGORIES.keys())[:5]}...")
-    
     # First, check if reason exactly matches a category name (for LLM-extracted reasons)
     if reason_lower in REASON_CATEGORIES:
         categories.append(reason_lower)
-        logger.info(f"[DEBUG _categorize_reason] ✅ Exact match found! Returning: {categories}")
         return categories  # Return immediately for exact match
-    
-    logger.info(f"[DEBUG _categorize_reason] No exact match, checking keywords...")
     
     # Otherwise, check if any keywords match
     for category, keywords in REASON_CATEGORIES.items():
         if any(keyword in reason_lower for keyword in keywords):
             categories.append(category)
-            logger.info(f"[DEBUG _categorize_reason] Keyword match: {category}")
     
-    logger.info(f"[DEBUG _categorize_reason] Final categories: {categories}")
     return categories
 
 
-def _compute_reason_score(activity: dict, reason: str) -> float:
+def _compute_reason_score(activity: dict, reason: str, llm_batch_scores: dict = None) -> float:
     """
     Signal 1: Does activity help with this reason?
     Returns: 0 or 1 (binary match)
     
     Hybrid approach:
     1. Try tag-based matching first (fast, free)
-    2. If no match, use LLM fallback (catches untagged activities)
+    2. If no match, use pre-computed LLM batch scores
     3. Cache LLM results to avoid repeated calls
+    
+    Args:
+        activity: Activity dict
+        reason: User's reason
+        llm_batch_scores: Pre-computed LLM scores for all activities (optional)
     """
     activity_id = activity.get('id', 'unknown')
     
-    # DEBUG: Log entry
-    logger.info(f"[DEBUG _compute_reason_score] ===== Activity: {activity_id} =====")
-    logger.info(f"[DEBUG _compute_reason_score] Reason: '{reason}'")
-    
     if not reason:
-        logger.info(f"[DEBUG _compute_reason_score] No reason provided, returning 0.0")
         return 0.0
     
     # STEP 1: Try tag-based matching (fast, free)
     tag_score = _compute_reason_score_with_tags(activity, reason)
     
     if tag_score > 0:
-        logger.info(f"[DEBUG _compute_reason_score] ✅ Tag match found! Score: {tag_score}")
+        logger.debug(f"[Reason Score] {activity_id}: tag match = {tag_score}")
         return tag_score
     
-    logger.info(f"[DEBUG _compute_reason_score] No tag match, trying LLM fallback...")
+    # STEP 2: Use pre-computed LLM batch scores if available
+    if llm_batch_scores and activity_id in llm_batch_scores:
+        llm_score = llm_batch_scores[activity_id]
+        logger.debug(f"[Reason Score] {activity_id}: LLM batch score = {llm_score}")
+        return llm_score
     
-    # STEP 2: Try LLM fallback (for untagged/unmatched activities)
-    llm_score = _compute_reason_score_with_llm(activity, reason)
-    
-    if llm_score > 0:
-        logger.info(f"[DEBUG _compute_reason_score] ✅ LLM match found! Score: {llm_score}")
-    else:
-        logger.info(f"[DEBUG _compute_reason_score] ❌ No match found")
-    
-    return llm_score
+    # STEP 3: Fallback to 0 if no match (shouldn't happen with batch processing)
+    logger.debug(f"[Reason Score] {activity_id}: no match")
+    return 0.0
 
 
 def _compute_reason_score_with_tags(activity: dict, reason: str) -> float:
@@ -696,40 +685,29 @@ def _compute_reason_score_with_tags(activity: dict, reason: str) -> float:
     """
     # Get reason categories
     categories = _categorize_reason(reason)
-    logger.info(f"[DEBUG _compute_reason_score] Categories from _categorize_reason: {categories}")
     
     if not categories:
         # Fallback to substring matching
-        logger.info(f"[DEBUG _compute_reason_score] No categories, using substring fallback")
         reason_lower = reason.lower()
         best_for = activity.get('best_for', [])
         
         for keyword in best_for:
             if keyword in reason_lower:
-                logger.info(f"[DEBUG _compute_reason_score] ✅ Substring match: '{keyword}' in '{reason_lower}'")
                 return 1.0
         
-        logger.info(f"[DEBUG _compute_reason_score] ❌ No substring match")
         return 0.0
     
     # Check if activity helps with any of the categories
     activity_tags = activity.get('best_for', [])
-    logger.info(f"[DEBUG _compute_reason_score] Activity tags: {activity_tags} (type: {type(activity_tags)})")
     
     for category in categories:
         category_tags = CATEGORY_TO_ACTIVITY_TAGS.get(category, [])
-        logger.info(f"[DEBUG _compute_reason_score] Category '{category}' → looking for tags: {category_tags}")
         
         # Check if any category tag matches activity tags
         for tag in category_tags:
-            logger.info(f"[DEBUG _compute_reason_score]   Checking if '{tag}' in {activity_tags}")
             if tag in activity_tags:
-                logger.info(f"[DEBUG _compute_reason_score]   ✅ MATCH FOUND! '{tag}' is in activity tags")
                 return 1.0  # Match found!
-            else:
-                logger.info(f"[DEBUG _compute_reason_score]   ❌ No match for '{tag}'")
     
-    logger.info(f"[DEBUG _compute_reason_score] ❌ No matches found for any category")
     return 0.0  # No match
 
 
@@ -737,6 +715,9 @@ def _compute_reason_score_with_llm(activity: dict, reason: str) -> float:
     """
     LLM-based matching fallback (for untagged activities)
     Uses caching to avoid repeated API calls
+    
+    NOTE: This function is kept for backward compatibility but should NOT be called in loops.
+    Use _compute_reason_scores_batch_llm instead for better performance.
     """
     activity_id = activity.get('id', 'unknown')
     
@@ -744,12 +725,12 @@ def _compute_reason_score_with_llm(activity: dict, reason: str) -> float:
     cache_key = (activity_id, reason.lower())
     if cache_key in _llm_relevance_cache:
         cached_score = _llm_relevance_cache[cache_key]
-        logger.info(f"[LLM Fallback] Using cached score for {activity_id}: {cached_score}")
+        logger.debug(f"[LLM Fallback] Using cached score for {activity_id}: {cached_score}")
         return cached_score
     
     # Check if LLM is available
     if not llm_service.is_available():
-        logger.info(f"[LLM Fallback] LLM not available, returning 0.0")
+        logger.debug(f"[LLM Fallback] LLM not available, returning 0.0")
         return 0.0
     
     # Use LLM to check relevance
@@ -766,7 +747,7 @@ User's concern: {reason}
 
 Respond with ONLY "yes" or "no"."""
 
-        logger.info(f"[LLM Fallback] Checking relevance for {activity_id}...")
+        logger.debug(f"[LLM Fallback] Checking relevance for {activity_id}...")
         
         response = llm_service.call(
             prompt=prompt,
@@ -780,7 +761,7 @@ Respond with ONLY "yes" or "no"."""
         # Cache the result
         _llm_relevance_cache[cache_key] = score
         
-        logger.info(f"[LLM Fallback] {activity_id} relevance: {response_lower} → score={score}")
+        logger.debug(f"[LLM Fallback] {activity_id} relevance: {response_lower} → score={score}")
         
         return score
         
@@ -790,7 +771,114 @@ Respond with ONLY "yes" or "no"."""
     except Exception as e:
         logger.error(f"[LLM Fallback] Unexpected error: {e}")
         return 0.0
-    return 0.0  # No match
+
+
+def _compute_reason_scores_batch_llm(activities: list, reason: str) -> dict:
+    """
+    Batch LLM scoring for multiple activities at once.
+    This is the OPTIMIZED version that reduces 30+ API calls to 1.
+    
+    Args:
+        activities: List of activity dicts (should be limited to top 10 candidates)
+        reason: User's reason
+        
+    Returns:
+        Dict mapping activity_id -> score (0.0 or 1.0)
+    """
+    if not activities or not reason:
+        return {}
+    
+    # Check cache first for all activities
+    scores = {}
+    uncached_activities = []
+    
+    for activity in activities:
+        activity_id = activity.get('id', 'unknown')
+        cache_key = (activity_id, reason.lower())
+        
+        if cache_key in _llm_relevance_cache:
+            scores[activity_id] = _llm_relevance_cache[cache_key]
+            logger.debug(f"[Batch LLM] Using cached score for {activity_id}")
+        else:
+            uncached_activities.append(activity)
+    
+    # If all cached, return early
+    if not uncached_activities:
+        logger.info(f"[Batch LLM] All {len(activities)} activities found in cache")
+        return scores
+    
+    # Check if LLM is available
+    if not llm_service.is_available():
+        logger.warning(f"[Batch LLM] LLM not available, returning 0.0 for {len(uncached_activities)} activities")
+        for activity in uncached_activities:
+            scores[activity.get('id', 'unknown')] = 0.0
+        return scores
+    
+    # Build batch prompt for all uncached activities
+    try:
+        activities_list = "\n".join([
+            f"{i+1}. {act.get('name', 'Unknown')}: {act.get('description', '')}"
+            for i, act in enumerate(uncached_activities)
+        ])
+        
+        prompt = f"""Evaluate which activities are relevant for someone with this wellness concern.
+
+User's concern: {reason}
+
+Activities:
+{activities_list}
+
+For each activity, respond with "yes" if relevant or "no" if not relevant.
+Format your response as a numbered list matching the input:
+1. yes/no
+2. yes/no
+etc.
+
+Your response:"""
+
+        logger.info(f"[Batch LLM] Scoring {len(uncached_activities)} activities in ONE API call...")
+        
+        response = llm_service.call(
+            prompt=prompt,
+            max_tokens=100,
+            temperature=0.1
+        )
+        
+        # Parse response
+        lines = response.strip().split('\n')
+        for i, activity in enumerate(uncached_activities):
+            activity_id = activity.get('id', 'unknown')
+            
+            # Try to find the corresponding line
+            score = 0.0
+            if i < len(lines):
+                line = lines[i].lower()
+                if 'yes' in line:
+                    score = 1.0
+            
+            # Cache and store
+            cache_key = (activity_id, reason.lower())
+            _llm_relevance_cache[cache_key] = score
+            scores[activity_id] = score
+            
+            logger.debug(f"[Batch LLM] {activity_id}: {score}")
+        
+        logger.info(f"[Batch LLM] ✅ Scored {len(uncached_activities)} activities in 1 API call")
+        
+        return scores
+        
+    except (LLMUnavailableError, LLMAPIError) as e:
+        logger.warning(f"[Batch LLM] LLM error: {e}")
+        # Return 0.0 for all uncached
+        for activity in uncached_activities:
+            scores[activity.get('id', 'unknown')] = 0.0
+        return scores
+    except Exception as e:
+        logger.error(f"[Batch LLM] Unexpected error: {e}")
+        # Return 0.0 for all uncached
+        for activity in uncached_activities:
+            scores[activity.get('id', 'unknown')] = 0.0
+        return scores
 
 
 def _compute_category_bonus_score(activity: dict, reason: str) -> float:
@@ -1006,22 +1094,29 @@ def _compute_fatigue_score(activity: dict, context: dict) -> float:
 # WEIGHTED SUM CALCULATION
 # ============================================================================
 
-def _compute_weighted_score(activity: dict, reason: str, mood_emoji: str, context: dict) -> float:
+def _compute_weighted_score(activity: dict, reason: str, mood_emoji: str, context: dict, llm_batch_scores: dict = None) -> float:
     """
     Compute final score using weighted sum model.
     
     Formula:
-    score = w1*reason + w2*user_pref + w3*reason_pref + w4*time + w5*mood - w6*fatigue
+    score = w1*reason + w2*user_pref + w3*reason_pref + w4*time + w5*mood + w6*category - w7*fatigue
+    
+    Args:
+        activity: Activity dict
+        reason: User's reason
+        mood_emoji: User's mood
+        context: User context
+        llm_batch_scores: Pre-computed LLM scores (optional)
     
     Returns: 0-1 (higher = better match)
     """
-    # Compute all 7 signals (each 0-1)
-    reason_score = _compute_reason_score(activity, reason)
+    # Compute all signals (each 0-1)
+    reason_score = _compute_reason_score(activity, reason, llm_batch_scores)
     user_pref_score = _compute_user_preference_score(activity, context)
     reason_pref_score = _compute_reason_preference_score(activity, reason, context)
     time_score = _compute_time_preference_score(activity, context)
     mood_score = _compute_mood_intensity_score(activity, mood_emoji)
-    category_score = _compute_category_bonus_score(activity, reason)  # NEW!
+    category_score = _compute_category_bonus_score(activity, reason)
     fatigue_score = _compute_fatigue_score(activity, context)
     
     # Apply weighted sum
@@ -1031,7 +1126,7 @@ def _compute_weighted_score(activity: dict, reason: str, mood_emoji: str, contex
         WEIGHTS['reason_preference'] * reason_pref_score +
         WEIGHTS['time_preference'] * time_score +
         WEIGHTS['mood_intensity'] * mood_score +
-        WEIGHTS['category_bonus'] * category_score +  # NEW!
+        WEIGHTS['category_bonus'] * category_score +
         -WEIGHTS['fatigue_penalty'] * fatigue_score  # Subtract!
     )
     
@@ -1065,12 +1160,14 @@ def _score_suggestions_weighted(
     context: dict
 ) -> list:
     """
-    Score all suggestions using weighted sum model.
+    Score all suggestions using weighted sum model with OPTIMIZED batch LLM processing.
     
     Steps:
     1. Apply hard filters
-    2. Compute weighted scores for each (now includes mood intensity!)
-    3. Sort by score (descending)
+    2. Separate activities into tag-matched and unmatched
+    3. For unmatched: Limit to top 10 candidates and batch score with LLM (1 API call)
+    4. Compute weighted scores for each
+    5. Sort by score (descending)
     
     Returns: List of activities sorted by score
     """
@@ -1088,26 +1185,63 @@ def _score_suggestions_weighted(
         logger.warning("[Weighted Sum] No activities passed filters!")
         return []
     
-    # Step 2: Compute weighted scores
-    scored = []
+    # Step 2: Separate tag-matched from unmatched activities
+    tag_matched = []
+    unmatched = []
+    
     for activity in filtered:
-        score = _compute_weighted_score(activity, reason, mood_emoji, context)  # Pass mood_emoji!
+        tag_score = _compute_reason_score_with_tags(activity, reason)
+        if tag_score > 0:
+            tag_matched.append(activity)
+        else:
+            unmatched.append(activity)
+    
+    logger.info(f"[Weighted Sum] Tag matching: {len(tag_matched)} matched, {len(unmatched)} unmatched")
+    
+    # Step 3: Batch LLM scoring for unmatched (limit to top 10 candidates)
+    llm_batch_scores = {}
+    
+    if unmatched:
+        # Limit to top 10 candidates before LLM scoring
+        candidates_for_llm = unmatched[:10]
+        
+        if len(unmatched) > 10:
+            logger.info(f"[Weighted Sum] Limiting LLM candidates from {len(unmatched)} to 10")
+        
+        # ONE batch LLM call for all candidates
+        llm_batch_scores = _compute_reason_scores_batch_llm(candidates_for_llm, reason)
+        
+        # Only keep candidates that LLM scored (top 10)
+        unmatched = candidates_for_llm
+    
+    # Step 4: Compute weighted scores for all activities
+    scored = []
+    
+    # Score tag-matched activities (no LLM needed)
+    for activity in tag_matched:
+        score = _compute_weighted_score(activity, reason, mood_emoji, context, llm_batch_scores=None)
         activity['score'] = score
         scored.append(activity)
     
-    # Step 3: Sort by score (descending)
+    # Score LLM-matched activities
+    for activity in unmatched:
+        score = _compute_weighted_score(activity, reason, mood_emoji, context, llm_batch_scores)
+        activity['score'] = score
+        scored.append(activity)
+    
+    # Step 5: Sort by score (descending)
     scored.sort(key=lambda x: x['score'], reverse=True)
     
-    # Step 4: Log top 5 for debugging
+    # Step 6: Log top 5 for debugging
     logger.info(f"[Weighted Sum] Top 5 scores:")
     for i, activity in enumerate(scored[:5]):
         debug = activity.get('_debug_scores', {})
         logger.info(
             f"  #{i+1}: {activity['id']:20} "
             f"score={activity['score']:.3f} "
-            f"(r:{debug.get('reason_match', 0):.1f} "  # FIXED: was 'reason'
+            f"(r:{debug.get('reason_match', 0):.1f} "
             f"u:{debug.get('user_pref', 0):.1f} "
-            f"m:{debug.get('mood_intensity', 0):.1f} "  # FIXED: was 'mood'
+            f"m:{debug.get('mood_intensity', 0):.1f} "
             f"f:{debug.get('fatigue', 0):.1f})"
         )
     

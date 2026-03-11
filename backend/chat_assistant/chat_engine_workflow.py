@@ -42,6 +42,7 @@ class ChatEngineWorkflow:
         
         Phase 1: Uses LLM intent detection instead of can_handle()
         Guardrails: Applied before any processing to ensure safety and scope
+        Context Router: Handles activity workflow switching before processing
         
         Returns:
             dict with keys: message, ui_elements, completed, state
@@ -75,11 +76,33 @@ class ChatEngineWorkflow:
         
         # Use WorkflowState directly (it's already a singleton per user)
         from .unified_state import get_workflow_state
-        workflow_state = get_workflow_state(user_id)
+        workflow_state = get_workflow_state(int(user_id))
         
         logger.info(f"Current state: {workflow_state.state.value}, Active workflow: {workflow_state.active_workflow}")
         
-        # ===== UNIVERSAL CONTEXT CHECK (NEW) =====
+        # ===== CONTEXT ROUTER CHECK (NEW - BEFORE WORKFLOW PROCESSING) =====
+        from .context_router import ContextRouter
+        context_router = ContextRouter()
+        
+        # Route message through context router first
+        routed_response = context_router.route_message(message, workflow_state, int(user_id))
+        
+        if routed_response:
+            # Context router handled the message (workflow switch or activity detection)
+            logger.info(f"[Context Router] Message routed successfully")
+            
+            # Update activity time for timeout tracking
+            workflow_state.update_activity_time()
+            
+            # Store messages in conversation history
+            workflow_state.add_message('user', message)
+            workflow_state.add_message('assistant', routed_response.message)
+            
+            # Convert to dict format
+            result = self._convert_response(routed_response, workflow_state, 'context_router', user_id)
+            return result
+        
+        # ===== UNIVERSAL CONTEXT CHECK =====
         # Check if this is a follow-up to recent activity using session summary
         if workflow_state.is_idle():  # Only check if no active workflow
             from .universal_context_handler import get_universal_context_handler
@@ -203,10 +226,9 @@ class ChatEngineWorkflow:
         # Even if there's an active mood workflow showing suggestions
         if is_external_content_button or is_activity_start_button:
             logger.info(f"[Priority] Detected external/activity button: '{message}' - routing to activity workflow")
-            # Complete any active workflow
-            if workflow_state.active_workflow:
-                logger.info(f"Completing active workflow '{workflow_state.active_workflow}' to handle activity button")
-                workflow_state.complete_workflow()
+            
+            # IMPORTANT: Don't complete workflow yet - preserve context for proper handling
+            # The activity workflow will handle the external activity and maintain context
             
             # Route to activity workflow
             activity_workflow = self.registry.get_workflow_for_intent('activity_logging')
@@ -510,15 +532,20 @@ class ChatEngineWorkflow:
             workflow_name: Name of the workflow
             user_id: User ID for event publishing
         """
+        # IMPORTANT: Use workflow_state.state for the actual state, not response.next_state
+        # response.next_state is what the workflow wants to transition to
+        # but workflow_state.state is the actual current state
+        actual_state = workflow_state.state.value if workflow_state.state else 'idle'
+        
         result = {
             'message': response.message,
             'ui_elements': response.ui_elements,
             'completed': response.completed,
-            'state': response.next_state.value if response.next_state else 'idle'
+            'state': actual_state  # Use actual workflow state, not response suggestion
         }
         result.update(response.extra_data)
         
-        logger.info(f"Workflow {workflow_name} - completed: {response.completed}, state: {result['state']}")
+        logger.info(f"Workflow {workflow_name} - completed: {response.completed}, state: {actual_state}, active_workflow: {workflow_state.active_workflow}")
         
         # Phase 2: Publish events if workflow completed
         if response.completed and self.enable_events and response.events:

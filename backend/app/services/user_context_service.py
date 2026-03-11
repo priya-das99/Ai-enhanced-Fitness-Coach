@@ -186,11 +186,11 @@ class UserContextService:
             if not progress:
                 return {'should_send': False, 'reason': 'No active water challenge'}
             
-            # Send if: less than 50% complete AND after 12:05 PM (TESTING)
-            if progress['percentage'] < 50 and current_hour >= 12:
+            # Send if: less than 50% complete AND after 3:00 PM (mid-afternoon)
+            if progress['percentage'] < 50 and current_hour >= 15:
                 return {
                     'should_send': True,
-                    'reason': 'Low progress, afternoon',
+                    'reason': 'Low progress, mid-afternoon check',
                     'data': progress
                 }
             
@@ -229,15 +229,15 @@ class UserContextService:
         elif reminder_type == 'mood_reminder':
             summary = self.get_daily_summary(user_id)
             
-            # Send if: no mood logged AND after 10 AM
-            if not summary['mood']['logged'] and current_hour >= 10:
+            # Send if: no mood logged AND after 4 PM (evening reflection)
+            if not summary['mood']['logged'] and current_hour >= 16:
                 return {
                     'should_send': True,
-                    'reason': 'No mood logged, morning',
+                    'reason': 'No mood logged, evening reflection time',
                     'data': summary['mood']
                 }
             
-            return {'should_send': False, 'reason': 'Mood already logged'}
+            return {'should_send': False, 'reason': 'Mood already logged or too early'}
         
         elif reminder_type == 'evening_challenges':
             # Send if: any incomplete challenges AND after 8 PM
