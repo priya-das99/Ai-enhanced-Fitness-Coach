@@ -21,18 +21,21 @@ class ActivityValidator:
             'warning_threshold': 15,
             'decimal_allowed': False,
             'context': '1 glass = ~250ml',
-            'health_note': 'Typical daily intake is 6-12 glasses'
+            'health_note': 'Typical daily intake is 6-12 glasses',
+            'daily_limit': 25  # ~6.25L maximum per day
         },
         
         'sleep': {
-            'min': 1,
-            'max': 16,
+            'min': 0.5,  # Allow short naps but warn
+            'max': 12,  # Reduced from 16 - more realistic maximum
             'typical_range': (6, 9),
             'unit': 'hours',
-            'warning_threshold': 12,
+            'warning_threshold': 10,  # Reduced from 12 - warn earlier
+            'short_sleep_warning': 2,  # Warn if less than 2 hours
             'decimal_allowed': True,
-            'context': 'Includes naps and nighttime sleep',
-            'health_note': 'Recommended sleep is 7-9 hours per night'
+            'context': 'Total sleep for the night (including naps)',
+            'health_note': 'Recommended sleep is 7-9 hours per night',
+            'daily_limit': 12  # Hard daily limit
         },
         
         'exercise': {
@@ -43,7 +46,8 @@ class ActivityValidator:
             'warning_threshold': 120,  # 2 hours (more reasonable)
             'decimal_allowed': False,
             'context': 'Any physical activity counts',
-            'health_note': 'WHO recommends 150 minutes per week (21 min/day)'
+            'health_note': 'WHO recommends 150 minutes per week (21 min/day)',
+            'daily_limit': 480  # 8 hours absolute maximum per day
         },
         
         'weight': {
@@ -54,7 +58,8 @@ class ActivityValidator:
             'warning_threshold': 200,
             'decimal_allowed': True,
             'context': 'Current body weight',
-            'health_note': 'Healthy BMI range varies by height'
+            'health_note': 'Healthy BMI range varies by height',
+            'daily_limit': None  # Weight doesn't accumulate
         },
         
         'steps': {
@@ -65,7 +70,8 @@ class ActivityValidator:
             'warning_threshold': 30000,
             'decimal_allowed': False,
             'context': 'Daily step count from walking/running',
-            'health_note': '10,000 steps per day is a common goal'
+            'health_note': '10,000 steps per day is a common goal',
+            'daily_limit': 100000  # Extreme but possible for ultra-marathoners
         },
         
         'calories': {
@@ -76,13 +82,19 @@ class ActivityValidator:
             'warning_threshold': 1500,
             'decimal_allowed': False,
             'context': 'Calories burned during exercise',
-            'health_note': 'Varies greatly by activity intensity and duration'
+            'health_note': 'Varies greatly by activity intensity and duration',
+            'daily_limit': 8000  # Extreme endurance activities
         }
     }
     
-    def validate_activity_input(self, activity_type: str, value: float) -> Dict:
+    def validate_activity_input(self, activity_type: str, value: float, user_id: int = None) -> Dict:
         """
-        Comprehensive validation for all activity types
+        Comprehensive validation for all activity types including daily accumulation checks.
+        
+        Args:
+            activity_type: Type of activity (sleep, water, etc.)
+            value: Value to validate
+            user_id: User ID for daily accumulation checks (optional)
         
         Returns:
             {
@@ -164,11 +176,22 @@ class ActivityValidator:
                     'valid': False,
                     'message': f"{value}kg is not realistic. Please enter 30-300kg. Check your units (kg vs lbs)?{suggestion}"
                 }
+            elif activity_type == 'sleep' and value >= 15:
+                return {
+                    'valid': False,
+                    'message': f"{value} hours of sleep is impossible! There are only 24 hours in a day. Please enter 1-12 hours.{suggestion}"
+                }
             else:
                 return {
                     'valid': False,
                     'message': f"{value} {rules['unit']} is too high! Please enter {rules['min']}-{rules['max']} {rules['unit']}.{suggestion}"
                 }
+        
+        # Daily accumulation validation (if user_id provided)
+        if user_id and rules.get('daily_limit'):
+            daily_check = self._check_daily_accumulation(activity_type, value, user_id, rules)
+            if not daily_check['valid']:
+                return daily_check
         
         # Check warning threshold (high but not invalid)
         if value >= rules['warning_threshold']:
@@ -178,8 +201,70 @@ class ActivityValidator:
                 'message': f"{value} {rules['unit']} is quite high! {rules['health_note']}. Are you sure?"
             }
         
+        # Check for short sleep warning (specific to sleep)
+        if activity_type == 'sleep' and value < rules.get('short_sleep_warning', 0):
+            return {
+                'valid': True,
+                'needs_confirmation': True,
+                'message': f"{value} {rules['unit']} is very short sleep. This might be a nap rather than main sleep. Is this correct?"
+            }
+        
         # All validation passed!
         return {'valid': True}
+    
+    def _check_daily_accumulation(self, activity_type: str, new_value: float, user_id: int, rules: Dict) -> Dict:
+        """
+        Check if adding this value would exceed daily limits for accumulative activities.
+        
+        Args:
+            activity_type: Type of activity
+            new_value: New value to add
+            user_id: User ID
+            rules: Validation rules for this activity
+            
+        Returns:
+            {'valid': bool, 'message': str (if invalid)}
+        """
+        try:
+            # Import here to avoid circular imports
+            from app.services.user_context_service import get_context_service
+            from app.services.user_context_service import UserContextService
+            
+            context_service = get_context_service()
+            
+            # Get today's current total
+            daily_summary = context_service.get_daily_summary(user_id)
+            current_total = daily_summary.get(activity_type, {}).get('value', 0)
+            
+            # For 'latest' aggregation activities (sleep, weight), check if new value exceeds daily limit
+            aggregation_rule = UserContextService.ACTIVITY_AGGREGATION_RULES.get(activity_type, 'sum')
+            
+            if aggregation_rule == 'latest':
+                # For latest activities, the new value replaces the old one
+                projected_total = new_value
+            else:
+                # For sum activities, add to existing total
+                projected_total = current_total + new_value
+            
+            daily_limit = rules.get('daily_limit')
+            if daily_limit and projected_total > daily_limit:
+                if aggregation_rule == 'latest':
+                    return {
+                        'valid': False,
+                        'message': f"{new_value} {rules['unit']} exceeds the daily limit of {daily_limit} {rules['unit']}! Please enter a realistic value."
+                    }
+                else:
+                    return {
+                        'valid': False,
+                        'message': f"Adding {new_value} {rules['unit']} would give you {projected_total:.1f} {rules['unit']} today, which exceeds the daily limit of {daily_limit} {rules['unit']}! Current total: {current_total:.1f} {rules['unit']}."
+                    }
+            
+            return {'valid': True}
+            
+        except Exception as e:
+            logger.error(f"Error checking daily accumulation: {e}")
+            # If we can't check, allow it (don't block user)
+            return {'valid': True}
     
     def get_activity_info(self, activity_type: str) -> Optional[Dict]:
         """Get validation rules and info for an activity type"""

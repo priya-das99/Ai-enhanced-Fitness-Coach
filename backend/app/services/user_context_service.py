@@ -14,9 +14,20 @@ class UserContextService:
     Used by: Workflows, Scheduler, Notifications
     """
     
+    # Define how different activities should be aggregated
+    ACTIVITY_AGGREGATION_RULES = {
+        'sleep': 'latest',      # Use most recent entry (not additive)
+        'weight': 'latest',     # Use most recent entry (not additive)
+        'water': 'sum',         # Sum all entries for the day
+        'exercise': 'sum',      # Sum all entries for the day
+        'steps': 'sum',         # Sum all entries for the day
+        'calories': 'sum',      # Sum all entries for the day
+        'meal': 'sum',          # Sum all entries for the day
+    }
+    
     def get_daily_summary(self, user_id: int, target_date: str = None) -> Dict:
         """
-        Get complete daily summary for user.
+        Get complete daily summary for user with proper aggregation rules.
         
         Returns:
             {
@@ -33,28 +44,7 @@ class UserContextService:
         with get_db() as db:
             cursor = db.cursor()
             
-            # Get all activities for the day
-            cursor.execute('''
-                SELECT activity_type, SUM(value) as total, unit
-                FROM health_activities
-                WHERE user_id = ? AND DATE(timestamp) = ?
-                GROUP BY activity_type, unit
-            ''', (user_id, target_date))
-            
-            activities = cursor.fetchall()
-            
-            # Get mood for the day
-            cursor.execute('''
-                SELECT mood_emoji, timestamp
-                FROM mood_logs
-                WHERE user_id = ? AND DATE(timestamp) = ?
-                ORDER BY timestamp DESC
-                LIMIT 1
-            ''', (user_id, target_date))
-            
-            mood = cursor.fetchone()
-            
-            # Get challenge targets
+            # Get challenge targets first
             cursor.execute('''
                 SELECT c.challenge_type, c.target_value, c.target_unit
                 FROM challenges c
@@ -66,32 +56,73 @@ class UserContextService:
                 'target': row['target_value'],
                 'unit': row['target_unit']
             } for row in cursor.fetchall()}
-        
-        # Build summary
-        summary = {
-            'water': {'value': 0, 'unit': 'glasses', 'target': targets.get('water', {}).get('target', 8)},
-            'sleep': {'value': 0, 'unit': 'hours', 'target': targets.get('sleep', {}).get('target', 8)},
-            'exercise': {'value': 0, 'unit': 'minutes', 'target': targets.get('exercise', {}).get('target', 30)},
-            'mood': {'emoji': None, 'logged': False},
-            'total_activities': 0
-        }
-        
-        # Fill in actual values
-        for activity in activities:
-            activity_type = activity['activity_type']
-            if activity_type in summary:
-                summary[activity_type]['value'] = activity['total']
-                summary[activity_type]['unit'] = activity['unit']
+            
+            # Build summary with defaults
+            summary = {
+                'water': {'value': 0, 'unit': 'glasses', 'target': targets.get('water', {}).get('target', 8)},
+                'sleep': {'value': 0, 'unit': 'hours', 'target': targets.get('sleep', {}).get('target', 8)},
+                'exercise': {'value': 0, 'unit': 'minutes', 'target': targets.get('exercise', {}).get('target', 30)},
+                'mood': {'emoji': None, 'logged': False},
+                'total_activities': 0
+            }
+            
+            # Get activities using proper aggregation rules
+            for activity_type, aggregation_rule in self.ACTIVITY_AGGREGATION_RULES.items():
+                if activity_type in summary:  # Only process activities we track in summary
+                    
+                    if aggregation_rule == 'latest':
+                        # Get the most recent entry for this activity type
+                        # Use rowid as secondary sort to handle identical timestamps
+                        cursor.execute('''
+                            SELECT value, unit, timestamp
+                            FROM health_activities
+                            WHERE user_id = ? AND activity_type = ? AND DATE(timestamp) = ?
+                            ORDER BY timestamp DESC, rowid DESC
+                            LIMIT 1
+                        ''', (user_id, activity_type, target_date))
+                        
+                        result = cursor.fetchone()
+                        if result:
+                            summary[activity_type]['value'] = result['value']
+                            summary[activity_type]['unit'] = result['unit']
+                            summary['total_activities'] += 1
+                            logger.info(f"Latest {activity_type}: {result['value']} {result['unit']} at {result['timestamp']}")
+                    
+                    elif aggregation_rule == 'sum':
+                        # Sum all entries for this activity type
+                        cursor.execute('''
+                            SELECT SUM(value) as total, unit
+                            FROM health_activities
+                            WHERE user_id = ? AND activity_type = ? AND DATE(timestamp) = ?
+                            GROUP BY unit
+                        ''', (user_id, activity_type, target_date))
+                        
+                        result = cursor.fetchone()
+                        if result and result['total']:
+                            summary[activity_type]['value'] = result['total']
+                            summary[activity_type]['unit'] = result['unit']
+                            summary['total_activities'] += 1
+                            logger.info(f"Sum {activity_type}: {result['total']} {result['unit']}")
+            
+            # Get mood for the day
+            cursor.execute('''
+                SELECT mood_emoji, timestamp
+                FROM mood_logs
+                WHERE user_id = ? AND DATE(timestamp) = ?
+                ORDER BY timestamp DESC
+                LIMIT 1
+            ''', (user_id, target_date))
+            
+            mood = cursor.fetchone()
+            if mood:
+                summary['mood'] = {
+                    'emoji': mood['mood_emoji'],
+                    'logged': True,
+                    'time': mood['timestamp']
+                }
                 summary['total_activities'] += 1
         
-        if mood:
-            summary['mood'] = {
-                'emoji': mood['mood_emoji'],
-                'logged': True,
-                'time': mood['timestamp']
-            }
-            summary['total_activities'] += 1
-        
+        logger.info(f"Daily summary for user {user_id} on {target_date}: {summary}")
         return summary
     
     def get_challenge_progress_today(self, user_id: int, challenge_type: str) -> Optional[Dict]:

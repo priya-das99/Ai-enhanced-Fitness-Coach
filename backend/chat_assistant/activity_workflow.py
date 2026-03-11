@@ -152,7 +152,7 @@ class ActivityWorkflow(BaseWorkflow):
                     )
         
         # Have all info - validate first, then log immediately
-        validation_result = self.validator.validate_activity_input(activity['activity_type'], activity['value'])
+        validation_result = self.validator.validate_activity_input(activity['activity_type'], activity['value'], user_id)
         
         if not validation_result['valid']:
             # Invalid input - ask for clarification
@@ -352,8 +352,65 @@ class ActivityWorkflow(BaseWorkflow):
             # Check if user wants to log more of the same activity
             message_lower = message.lower().strip()
             
+            # SPECIAL CASE FOR SLEEP: "add X more hours" should be treated as an update, not new entry
+            if last_activity == 'sleep' and any(phrase in message_lower for phrase in ['add', 'more']):
+                # For sleep, "add more" usually means updating the existing entry
+                # Extract the additional amount they want to add
+                additional_value = self.intent_detector.extract_number(message)
+                
+                if additional_value is not None:
+                    # They want to add X more hours to their existing sleep
+                    # This should trigger duplicate detection logic, not new entry logic
+                    logger.info(f"User wants to add {additional_value} more hours to existing sleep")
+                    
+                    # Get the existing sleep value from today
+                    from datetime import datetime, timedelta
+                    now = datetime.now()
+                    is_morning = now.hour < 12
+                    is_early_afternoon = 12 <= now.hour < 15
+                    
+                    if is_morning or is_early_afternoon:
+                        target_date = (now - timedelta(days=1)).date()
+                    else:
+                        target_date = now.date()
+                    
+                    existing_sleep = self.activity_logger.check_recent_sleep(user_id, target_date)
+                    if existing_sleep:
+                        # Calculate the new total (existing + additional)
+                        new_total = float(existing_sleep['value']) + additional_value
+                        
+                        # Set up duplicate confirmation state
+                        state.set_workflow_data('awaiting_followup', False)
+                        state.set_workflow_data('activity_type', 'sleep')
+                        state.set_workflow_data('unit', 'hours')
+                        state.set_workflow_data('new_value', new_total)
+                        state.set_workflow_data('previous_value', existing_sleep['value'])
+                        state.set_workflow_data('awaiting_duplicate_confirmation', True)
+                        state.set_workflow_data('notes', f'Update: {message}')
+                        
+                        return self._ask_clarification(
+                            message=f"You already logged {existing_sleep['value']} hours of sleep for that night. Would you like to update it to {new_total} hours?",
+                            ui_elements=['text_input']
+                        )
+                    else:
+                        # No existing sleep found - treat as new entry
+                        logger.info("No existing sleep found, treating as new entry")
+                        # Fall through to regular "add more" logic
+                        pass
+                else:
+                    # No number detected in "add more" - ask for clarification
+                    state.set_workflow_data('awaiting_followup', False)
+                    state.set_workflow_data('activity_type', last_activity)
+                    state.set_workflow_data('unit', last_unit)
+                    state.set_workflow_data('notes', f'Follow-up: {message}')
+                    
+                    return self._ask_clarification(
+                        message=self._get_clarification_message(last_activity),
+                        ui_elements=['text_input']
+                    )
+            
             if any(phrase in message_lower for phrase in ['log more', 'more', 'add more', 'another', 'again']):
-                # User wants to log more of the same activity
+                # User wants to log more of the same activity (for non-sleep or when no existing entry)
                 logger.info(f"User wants to log more {last_activity}")
                 
                 # Clear follow-up state and restart the same activity workflow
@@ -383,7 +440,7 @@ class ActivityWorkflow(BaseWorkflow):
                     logger.info(f"User provided quantity {value} for follow-up {last_activity}")
                     
                     # Validate the input
-                    validation_result = self.validator.validate_activity_input(last_activity, value)
+                    validation_result = self.validator.validate_activity_input(last_activity, value, user_id)
                     
                     if not validation_result['valid']:
                         return self._ask_clarification(
@@ -552,6 +609,62 @@ class ActivityWorkflow(BaseWorkflow):
             # User is responding to "already logged" confirmation
             message_lower = message.lower().strip()
             
+            # FIRST: Check if user is providing a new quantity instead of yes/no
+            # This handles cases like "I have slept for 5 hours" in response to confirmation
+            detected_activities = self.intent_detector.detect_all_activities(message)
+            if detected_activities:
+                # User provided a new activity value - treat this as an update
+                new_activity = detected_activities[0]
+                if new_activity['activity_type'] == activity_type:
+                    logger.info(f"User provided new {activity_type} value during confirmation: {new_activity['value']}")
+                    
+                    # Validate the new value
+                    validation_result = self.validator.validate_activity_input(activity_type, new_activity['value'], user_id)
+                    
+                    if not validation_result['valid']:
+                        return self._ask_clarification(
+                            message=validation_result['message'],
+                            ui_elements=['text_input']
+                        )
+                    
+                    if validation_result.get('needs_confirmation'):
+                        # New value also needs confirmation - update pending value and ask again
+                        state.set_workflow_data('new_value', new_activity['value'])
+                        state.set_workflow_data('pending_value', new_activity['value'])
+                        state.set_workflow_data('awaiting_validation_confirmation', True)
+                        state.set_workflow_data('awaiting_duplicate_confirmation', False)
+                        
+                        return self._ask_confirmation(
+                            message=validation_result['message'],
+                            ui_elements=['yes_no_buttons']
+                        )
+                    
+                    # Valid new value - log it directly
+                    try:
+                        self.activity_logger.log_activity(
+                            user_id=user_id,
+                            activity_type=activity_type,
+                            value=new_activity['value'],
+                            unit=new_activity['unit'],
+                            notes=new_activity.get('notes', '')
+                        )
+                        
+                        logger.info(f"Updated {activity_type}: {new_activity['value']} {new_activity['unit']}")
+                        
+                        # Update session summary
+                        self._update_session_summary(state, activity_type, new_activity['unit'])
+                        
+                        return self._complete_workflow(
+                            message=f"Got it! Updated your {activity_type} to {new_activity['value']} {new_activity['unit']}. 💪",
+                            ui_elements=[]
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to update activity: {e}")
+                        return self._complete_workflow(
+                            message="Sorry, I couldn't update that activity."
+                        )
+            
+            # SECOND: Check for explicit yes/no responses
             if message_lower in ['yes', 'y', 'yeah', 'yep', 'sure', 'ok', 'okay']:
                 # User wants to update - use the new value they provided earlier
                 new_value = state.get_workflow_data('new_value')
@@ -628,7 +741,7 @@ class ActivityWorkflow(BaseWorkflow):
             )
         
         # NEW: Validate the input using comprehensive validation system
-        validation_result = self.validator.validate_activity_input(activity_type, value)
+        validation_result = self.validator.validate_activity_input(activity_type, value, user_id)
         
         if not validation_result['valid']:
             # Invalid input - ask again with helpful guidance

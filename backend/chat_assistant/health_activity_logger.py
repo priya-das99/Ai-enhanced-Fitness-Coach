@@ -50,8 +50,8 @@ class HealthActivityLogger:
             conn.close()
             return None
     
-    def log_activity(self, user_id, activity_type, value, unit=None, notes=None):
-        """Log a health activity with smart date attribution for sleep"""
+    def log_activity(self, user_id, activity_type, value, unit=None, notes=None, custom_timestamp=None):
+        """Log a health activity with smart date attribution for sleep and timestamp validation"""
         conn = get_connection()
         cursor = conn.cursor()
         
@@ -59,10 +59,18 @@ class HealthActivityLogger:
         if not unit and activity_type in self.ACTIVITY_TYPES:
             unit = self.ACTIVITY_TYPES[activity_type]['unit']
         
-        # Smart timestamp for sleep: attribute to the night it started
+        # Validate timestamp if provided
         now = datetime.now()
+        if custom_timestamp:
+            try:
+                custom_dt = datetime.fromisoformat(custom_timestamp.replace('Z', '+00:00'))
+                if custom_dt > now:
+                    raise ValueError(f"Cannot log activities in the future. Provided: {custom_timestamp}, Current: {now}")
+            except ValueError as e:
+                raise ValueError(f"Invalid timestamp format or future timestamp: {e}")
         
-        if activity_type == 'sleep':
+        # Smart timestamp for sleep: attribute to the night it started
+        if activity_type == 'sleep' and not custom_timestamp:
             # Determine if this is nighttime sleep or a nap based on duration and time
             is_nighttime_sleep = value >= 5  # 5+ hours is likely nighttime sleep
             is_morning = now.hour < 12
@@ -83,8 +91,8 @@ class HealthActivityLogger:
                 # Attribute to today (nap or very late logging)
                 local_timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
         else:
-            # Regular logging - use current timestamp
-            local_timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
+            # Regular logging - use current timestamp or provided timestamp
+            local_timestamp = custom_timestamp or now.strftime('%Y-%m-%d %H:%M:%S')
         
         cursor.execute('''
             INSERT INTO health_activities (user_id, activity_type, value, unit, notes, timestamp)
