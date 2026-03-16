@@ -141,23 +141,24 @@ class GeneralWorkflow(BaseWorkflow):
                     suggestions=self._get_wellness_suggestions(user_id)
                 )
         
-        # 3. Check depth limit for this topic
-        if topic and state.depth_tracker:
-            depth_count = state.depth_tracker.get_info_count(topic)
-            should_nudge = state.depth_tracker.should_nudge_to_action(topic)
-            
-            logger.info(f"[Phase 2] Topic '{topic}' depth: {depth_count}/3")
-            
-            if should_nudge:
-                # Check if user is requesting override
-                if state.depth_tracker.is_override_request(message) and state.depth_tracker.can_override(topic):
-                    logger.info(f"[Phase 2] Override requested and allowed for topic: {topic}")
-                    state.depth_tracker.use_override(topic)
-                    # Continue to LLM response below
-                else:
-                    # Depth limit reached - nudge to action
-                    logger.info(f"[Phase 2] Depth limit reached for topic: {topic} - nudging to action")
-                    return self._generate_action_nudge(topic, user_id, state)
+        # 3. DISABLED: Depth limit check - let conversations flow naturally
+        # Users should be able to ask as many questions as they want
+        # if topic and state.depth_tracker:
+        #     depth_count = state.depth_tracker.get_info_count(topic)
+        #     should_nudge = state.depth_tracker.should_nudge_to_action(topic)
+        #     
+        #     logger.info(f"[Phase 2] Topic '{topic}' depth: {depth_count}/3")
+        #     
+        #     if should_nudge:
+        #         # Check if user is requesting override
+        #         if state.depth_tracker.is_override_request(message) and state.depth_tracker.can_override(topic):
+        #             logger.info(f"[Phase 2] Override requested and allowed for topic: {topic}")
+        #             state.depth_tracker.use_override(topic)
+        #             # Continue to LLM response below
+        #         else:
+        #             # Depth limit reached - nudge to action
+        #             logger.info(f"[Phase 2] Depth limit reached for topic: {topic} - nudging to action")
+        #             return self._generate_action_nudge(topic, user_id, state)
         
         # 4. Check if this is a casual off-topic mention (not a question/request)
         is_casual_mention = self._is_casual_mention(message)
@@ -170,11 +171,15 @@ class GeneralWorkflow(BaseWorkflow):
         if use_context:
             conversation_context = self._get_conversation_context(user_id)
         
-        # 6. Call LLM for natural responses
+        # 6. Get user fitness context (recent activities)
+        user_context = self._get_user_fitness_context(user_id)
+        
+        # 7. Call LLM for natural responses with full context
         try:
             response_text = self.response_phraser.phrase_general_response(
                 message, 
-                conversation_context=conversation_context
+                conversation_context=conversation_context,
+                user_context=user_context
             )
             logger.info(f"[Phase 2] Using LLM-generated response")
         except Exception as e:
@@ -334,40 +339,68 @@ class GeneralWorkflow(BaseWorkflow):
         return encouragements.get(activity, 'That sounds like a good plan!')
     
     def _should_show_action_buttons(self, message: str, is_casual: bool, state: WorkflowState) -> bool:
-        """Decide if action buttons should be shown"""
+        """
+        Decide if action buttons should be shown using LLM.
+        
+        NEW: Uses LLM to understand context and user intent.
+        A friend doesn't immediately suggest activities - they listen first.
+        """
         message_lower = message.lower()
         
-        # Don't show buttons for casual mentions
+        # Quick checks first (no LLM needed)
         if is_casual:
             return False
         
-        # Don't show buttons if user just said "I will" or similar (they're agreeing to something)
-        agreement_phrases = ['i will', "i'll", 'i can', 'yes i', 'sure i', 'okay i']
-        if any(phrase in message_lower for phrase in agreement_phrases):
-            return False
-        
-        # ✅ FIX: Allow buttons for activity-related words (even if short)
-        # This fixes the bug where clicking "hydrate" showed no buttons
-        activity_words = [
-            'hydrate', 'water', 'stretching', 'stretch', 'meditation', 'meditate',
-            'breathing', 'breathe', 'walk', 'exercise', 'sleep', 'rest', 'break',
-            'yoga', 'run', 'jog', 'swim', 'nap', 'relax'
-        ]
-        if any(word in message_lower for word in activity_words):
-            return True  # ✅ Show buttons for activity words
-        
-        # Don't show buttons for very short responses (likely clarifications)
         if len(message.split()) <= 2:
             return False
         
-        # Show buttons for explicit help requests
-        help_indicators = ['help', 'what can you do', 'options', 'features']
-        if any(indicator in message_lower for indicator in help_indicators):
-            return True
-        
-        # Show buttons for off-topic questions (already caught by safety check)
-        # Default: show buttons for general queries
-        return True
+        # Use LLM to decide if buttons are appropriate
+        try:
+            from chat_assistant.llm_service import get_llm_service
+            llm = get_llm_service()
+            
+            if not llm.is_available():
+                # Fallback to conservative default
+                return False
+            
+            prompt = f"""Should we show activity suggestion buttons to the user?
+
+User message: "{message}"
+
+Context: This is a fitness/wellness app with activities like breathing, meditation, walking, stretching.
+
+Show buttons (return "yes") ONLY if user:
+- Explicitly asks for help: "what can I do?", "help me", "suggest something"
+- Asks for options/recommendations: "show me activities", "what should I try?"
+- Requests suggestions: "give me ideas", "what activities?"
+
+Hide buttons (return "no") if user:
+- Expresses feelings: "I am angry", "feeling stressed", "I'm tired"
+- Asks informational questions: "is running good?", "how do I do pushups?"
+- Shares information: "I just went for a run", "I had a bad day"
+- Greets or chats: "hi", "hello", "thanks"
+
+CRITICAL EXAMPLES:
+- "What can I do?" = yes (explicitly asking for options)
+- "I am angry" = no (expressing emotion, listen first)
+- "Is running good?" = no (wants information, not activities)
+- "Help me feel better" = yes (requesting help)
+- "I'm feeling stressed" = no (expressing feeling)
+
+Return ONLY: yes or no
+"""
+            
+            result = llm.call(prompt, max_tokens=5, temperature=0.1)
+            decision = result.strip().lower()
+            
+            should_show = "yes" in decision
+            logger.info(f"[Button Decision] Message: '{message[:50]}...' → {'SHOW' if should_show else 'HIDE'} buttons")
+            
+            return should_show
+            
+        except Exception as e:
+            logger.warning(f"[Button Decision] LLM failed: {e}, defaulting to NO buttons")
+            return False  # Conservative default - don't show buttons
     
     def _check_safety(self, message: str) -> str:
         """Check for inappropriate content and return appropriate response"""
@@ -614,6 +647,31 @@ class GeneralWorkflow(BaseWorkflow):
             logger.warning(f"Failed to get conversation context: {e}")
             return ""
     
+    def _get_user_fitness_context(self, user_id: int) -> dict:
+        """Get user's recent fitness activities for context-aware responses"""
+        try:
+            import sys
+            import os
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+            from app.repositories.activity_repository import ActivityRepository
+            
+            activity_repo = ActivityRepository()
+            recent_activities = activity_repo.get_recent_activities(user_id, limit=5)
+            
+            return {
+                'recent_activities': [
+                    {
+                        'activity_type': activity.get('activity_type', 'activity'),
+                        'timestamp': activity.get('timestamp'),
+                        'duration': activity.get('duration_minutes')
+                    }
+                    for activity in recent_activities
+                ]
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get user fitness context: {e}")
+            return {'recent_activities': []}
+    
     def _get_friendly_fallback(self, message_lower: str) -> str:
         """Get a friendly fallback response based on message content"""
         import random
@@ -621,57 +679,28 @@ class GeneralWorkflow(BaseWorkflow):
         # Check for greetings
         if any(word in message_lower for word in ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening']):
             greetings = [
-                "Hey there! 👋 I'm here to help you track your mood and activities. How are you feeling today?",
-                "Hello! 😊 Great to see you! Want to log your mood or track an activity?",
-                "Hi! 🌟 I'm your wellness companion. How can I help you today?",
+                "Hey there! 👋 I'm your fitness buddy. What's your goal today?",
+                "Hello! 😊 Ready to crush your fitness goals? What can I help with?",
+                "Hi! 🌟 I'm here to help with workouts, exercises, and tracking. What's up?",
             ]
             return random.choice(greetings)
         
-        # Check for weather-related questions
-        if any(word in message_lower for word in ['weather', 'temperature', 'rain', 'sunny', 'cold', 'hot']):
-            weather_responses = [
-                "I wish I could help with the weather! 🌤️ But I'm focused on helping you track your mood and wellness. How are you feeling today?",
-                "Weather questions are outside my expertise! ☀️ But I'm great at helping you track your mood. Want to tell me how you're feeling?",
-                "I can't check the weather, but I can help you feel better! 😊 How about logging your mood or trying a wellness activity?",
+        # Check for fitness questions
+        if any(word in message_lower for word in ['exercise', 'workout', 'fitness', 'train', 'gym']):
+            fitness_responses = [
+                "I love talking fitness! What specific exercise or workout are you curious about?",
+                "Great question! Tell me more about what you're trying to achieve.",
+                "I can help with that! What's your fitness goal - strength, cardio, or flexibility?",
             ]
-            return random.choice(weather_responses)
+            return random.choice(fitness_responses)
         
-        # Check for time-related questions
-        if any(word in message_lower for word in ['time', 'date', 'day', 'clock', 'when']):
-            time_responses = [
-                "I don't track time, but I do track how you're feeling! 😊 Want to log your mood or activities?",
-                "Time flies when you're tracking wellness! ⏰ How about we log your mood or an activity?",
-                "I'm not a clock, but I am here to help you feel better! 🌟 What would you like to track today?",
-            ]
-            return random.choice(time_responses)
-        
-        # Check for jokes/entertainment
-        if any(word in message_lower for word in ['joke', 'funny', 'laugh', 'entertain']):
-            joke_responses = [
-                "I'm not great at jokes, but I am great at helping you feel better! 😄 How about logging your mood or trying a wellness activity?",
-                "Laughter is great for wellness! 😂 Speaking of which, how are you feeling today?",
-                "I'll leave the jokes to the comedians! 🎭 But I can help you track your mood and activities. Interested?",
-            ]
-            return random.choice(joke_responses)
-        
-        # Check for help/features
-        if any(word in message_lower for word in ['help', 'what can you do', 'features', 'how', 'guide']):
-            help_responses = [
-                "I can help you track your mood, log activities like water intake, sleep, and exercise, and suggest wellness activities when you're feeling down. What would you like to do?",
-                "Great question! 🌟 I'm here to help you log moods, track activities (water, sleep, exercise), and get personalized wellness suggestions. Where should we start?",
-                "I'm your wellness companion! 💪 I can track your mood, log daily activities, and suggest helpful activities based on how you're feeling. What interests you?",
-            ]
-            return random.choice(help_responses)
-        
-        # Generic friendly fallbacks with variety
-        generic_responses = [
-            "I'm here to help with mood and activity tracking! 😊 You can tell me how you're feeling, or log activities like water, sleep, or exercise. What would you like to do?",
-            "That's interesting! 🤔 While I focus on wellness tracking, I'd love to help you log your mood or activities. How are you feeling?",
-            "I appreciate you chatting with me! 💬 I'm best at helping with mood and activity tracking. Want to log something?",
-            "Thanks for sharing! 🌟 I'm here to help you track your wellness. How about we log your mood or an activity?",
-            "I'm focused on helping you feel your best! 😊 Want to track your mood, water intake, sleep, or exercise?",
+        # Default friendly response
+        default_responses = [
+            "I'm here to help with your fitness journey! Ask me about exercises, workouts, or tracking activities.",
+            "Not sure I caught that, but I'm great at fitness advice! What would you like to know?",
+            "Let's talk fitness! I can help with workouts, exercises, nutrition, or tracking your progress.",
         ]
-        return random.choice(generic_responses)
+        return random.choice(default_responses)
     
     def _get_contextual_engagement(self, user_id: int, state: WorkflowState) -> Optional[WorkflowResponse]:
         """

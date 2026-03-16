@@ -24,7 +24,20 @@ class ActivityIntentDetector:
     
     def extract_number(self, text):
         """Extract numeric value from text with decimal support"""
-        text_lower = text.lower()
+        text_lower = text.lower().strip()
+        
+        # CRITICAL: Check for ambiguous inputs first (before trying to extract numbers)
+        ambiguous_phrases = [
+            'a lot', 'lots', 'many', 'much', 'some', 'few', 'several',
+            'plenty', 'enough', 'not much', 'not many', 'a bit', 'a little',
+            'quite a bit', 'quite a lot', 'tons', 'loads'
+        ]
+        
+        # If the entire message is just an ambiguous phrase, return None
+        # This prevents LLM from guessing numbers
+        if any(phrase == text_lower or text_lower.startswith(phrase + ' ') or text_lower.endswith(' ' + phrase) for phrase in ambiguous_phrases):
+            logger.info(f"Ambiguous input detected: '{text}' - returning None to trigger clarification")
+            return None
         
         # Try to find digit numbers first (with or without units attached)
         # Match patterns like: 500, 500ml, 500 ml, 2.5, 2.5kg, 1.5 liters
@@ -340,6 +353,140 @@ class ActivityIntentDetector:
         
         return None
     
+    def detect_steps(self, text):
+        """Detect steps from text with unit conversion"""
+        text_lower = text.lower()
+        
+        # Steps patterns
+        steps_patterns = [
+            r'(?:log|track|record|took|walked|did|have)\s*(?:my\s*)?(\d+(?:\.\d+)?)\s*(?:thousand\s*)?steps?',
+            r'(\d+(?:\.\d+)?)\s*(?:thousand\s*)?steps?',
+            r'walked\s*(\d+(?:\.\d+)?)\s*(?:thousand\s*)?steps?',
+            r'step\s*count\s*(?:is\s*|was\s*)?(\d+(?:\.\d+)?)',
+            r'(\d+(?:\.\d+)?)\s*k\s*steps?',  # 10k steps
+            r'log\s*(?:my\s*)?steps?\s*(?:now|today)?',  # "log my steps now"
+            r'track\s*(?:my\s*)?steps?\s*(?:now|today)?'  # "track my steps"
+        ]
+        
+        for pattern in steps_patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                try:
+                    # Check if this is a logging request without value
+                    if 'log' in pattern or 'track' in pattern:
+                        if not match.groups() or not match.group(1):
+                            # This is a logging request without value - return activity type only
+                            return {
+                                'activity_type': 'steps',
+                                'value': None,
+                                'unit': 'steps',
+                                'notes': text,
+                                'needs_value_clarification': True
+                            }
+                    
+                    value = float(match.group(1))
+                    
+                    # Handle "k" or "thousand" multiplier
+                    if 'k' in text_lower or 'thousand' in text_lower:
+                        value *= 1000
+                    
+                    return {
+                        'activity_type': 'steps',
+                        'value': value,
+                        'unit': 'steps',
+                        'notes': text
+                    }
+                except (ValueError, IndexError):
+                    continue
+        
+        return None
+    
+    def detect_calories(self, text):
+        """Detect calories from text with unit conversion"""
+        text_lower = text.lower()
+        
+        # Calories patterns
+        calories_patterns = [
+            r'(?:log|track|record|consumed|ate|had|burned)\s*(?:my\s*)?(\d+(?:\.\d+)?)\s*(?:calories?|cals?|kcals?)',
+            r'(\d+(?:\.\d+)?)\s*(?:calories?|cals?|kcals?)',
+            r'calorie\s*(?:intake|count)\s*(?:is\s*|was\s*)?(\d+(?:\.\d+)?)',
+            r'log\s*(?:my\s*)?calories?\s*(?:now|today)?',  # "log my calories now"
+            r'track\s*(?:my\s*)?calories?\s*(?:now|today)?'  # "track my calories"
+        ]
+        
+        for pattern in calories_patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                try:
+                    # Check if this is a logging request without value
+                    if 'log' in pattern or 'track' in pattern:
+                        if not match.groups() or not match.group(1):
+                            # This is a logging request without value - return activity type only
+                            return {
+                                'activity_type': 'calories',
+                                'value': None,
+                                'unit': 'calories',
+                                'notes': text,
+                                'needs_value_clarification': True
+                            }
+                    
+                    value = float(match.group(1))
+                    
+                    return {
+                        'activity_type': 'calories',
+                        'value': value,
+                        'unit': 'calories',
+                        'notes': text
+                    }
+                except (ValueError, IndexError):
+                    continue
+        
+        return None
+    
+    def detect_meal(self, text):
+        """Detect meal from text with unit conversion"""
+        text_lower = text.lower()
+        
+        # Meal patterns
+        meal_patterns = [
+            r'(?:log|track|record|had|ate)\s*(?:my\s*)?(\d+(?:\.\d+)?)\s*(?:meals?|servings?)',
+            r'(\d+(?:\.\d+)?)\s*(?:meals?|servings?)',
+            r'meal\s*(?:count|intake)\s*(?:is\s*|was\s*)?(\d+(?:\.\d+)?)',
+            r'log\s*(?:my\s*)?meals?\s*(?:now|today)?',  # "log my meal now"
+            r'track\s*(?:my\s*)?meals?\s*(?:now|today)?',  # "track my meal"
+            r'log\s*(?:my\s*)?food\s*(?:now|today)?',  # "log my food"
+            r'track\s*(?:my\s*)?nutrition\s*(?:now|today)?'  # "track my nutrition"
+        ]
+        
+        for pattern in meal_patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                try:
+                    # Check if this is a logging request without value
+                    if 'log' in pattern or 'track' in pattern:
+                        if not match.groups() or not match.group(1):
+                            # This is a logging request without value - return activity type only
+                            return {
+                                'activity_type': 'meal',
+                                'value': None,
+                                'unit': 'servings',
+                                'notes': text,
+                                'needs_value_clarification': True
+                            }
+                    
+                    value = float(match.group(1))
+                    
+                    return {
+                        'activity_type': 'meal',
+                        'value': value,
+                        'unit': 'servings',
+                        'notes': text
+                    }
+                except (ValueError, IndexError):
+                    continue
+        
+        return None
+    
     def detect_all_activities(self, text):
         """Detect all possible activities from text with confidence scoring"""
         activities = []
@@ -349,7 +496,10 @@ class ActivityIntentDetector:
             ('water', self.detect_water_intake),
             ('sleep', self.detect_sleep),
             ('weight', self.detect_weight),
-            ('exercise', self.detect_exercise)
+            ('exercise', self.detect_exercise),
+            ('steps', self.detect_steps),
+            ('calories', self.detect_calories),
+            ('meal', self.detect_meal)
         ]
         
         for activity_type, detector in detectors:

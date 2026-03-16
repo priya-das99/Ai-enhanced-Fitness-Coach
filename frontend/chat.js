@@ -27,6 +27,7 @@ const chatbotBadge = document.getElementById('chatbotBadge');
 let isWaitingForResponse = false;
 let isChatOpen = false;
 let hasNewMessage = false;
+let lastActivityButtonsLocation = null;
 
 // Check authentication on page load
 document.addEventListener('DOMContentLoaded', async () => {
@@ -35,6 +36,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (currentUser) {
         initializeChat();
         setupEventListeners();
+        setupDemoReminderButtons(); // Add demo reminder buttons
         
         // Start notification polling after user is authenticated
         if (typeof startNotificationPolling === 'function') {
@@ -140,9 +142,18 @@ async function checkAuth() {
 
 // Setup event listeners
 function setupEventListeners() {
-    // Only setup chat listeners if user is authenticated
+    // Always setup send button listener (with auth check)
+    sendButton.addEventListener('click', () => {
+        if (!currentUser) {
+            alert('Please login to use the chat assistant.');
+            window.location.href = 'login.html';
+            return;
+        }
+        sendMessage();
+    });
+    
+    // Only setup other chat listeners if user is authenticated
     if (currentUser) {
-        sendButton.addEventListener('click', sendMessage);
         skipButton.addEventListener('click', () => sendMessage('skip'));
         
         // Chatbot button toggle
@@ -160,6 +171,11 @@ function setupEventListeners() {
         messageInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
+                if (!currentUser) {
+                    alert('Please login to use the chat assistant.');
+                    window.location.href = 'login.html';
+                    return;
+                }
                 sendMessage();
             }
         });
@@ -184,6 +200,123 @@ function setupEventListeners() {
     }
 }
 
+// Setup demo reminder buttons
+function setupDemoReminderButtons() {
+    const demoContainer = document.getElementById('demoReminderContainer');
+    const waterBtn = document.getElementById('sendWaterReminderBtn');
+    const challengeBtn = document.getElementById('sendChallengeReminderBtn');
+    const bothBtn = document.getElementById('sendBothRemindersBtn');
+    const toggleBtn = document.getElementById('toggleDemoBtn');
+    
+    if (!demoContainer) return;
+    
+    // Show demo buttons for authenticated users
+    if (currentUser) {
+        demoContainer.style.display = 'block';
+        
+        // Water reminder button
+        if (waterBtn) {
+            waterBtn.addEventListener('click', async () => {
+                try {
+                    waterBtn.disabled = true;
+                    waterBtn.textContent = '💧 Sending...';
+                    
+                    const response = await fetch(`${API_BASE_URL}/chat/demo/water-reminder`, {
+                        method: 'POST',
+                        headers: getAuthHeaders()
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        addMessage('system', `✅ ${data.message} Check your chat for the water reminder!`);
+                        // Refresh chat to show the new notification
+                        setTimeout(() => window.location.reload(), 1000);
+                    } else {
+                        addMessage('system', '❌ Failed to send water reminder');
+                    }
+                } catch (error) {
+                    console.error('Error sending water reminder:', error);
+                    addMessage('system', '❌ Error sending water reminder');
+                } finally {
+                    waterBtn.disabled = false;
+                    waterBtn.textContent = '💧 Water Reminder';
+                }
+            });
+        }
+        
+        // Challenge reminder button
+        if (challengeBtn) {
+            challengeBtn.addEventListener('click', async () => {
+                try {
+                    challengeBtn.disabled = true;
+                    challengeBtn.textContent = '🎯 Sending...';
+                    
+                    const response = await fetch(`${API_BASE_URL}/chat/demo/challenge-reminder`, {
+                        method: 'POST',
+                        headers: getAuthHeaders()
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        addMessage('system', `✅ ${data.message} Check your chat for the challenge reminder!`);
+                        // Refresh chat to show the new notification
+                        setTimeout(() => window.location.reload(), 1000);
+                    } else {
+                        addMessage('system', '❌ Failed to send challenge reminder');
+                    }
+                } catch (error) {
+                    console.error('Error sending challenge reminder:', error);
+                    addMessage('system', '❌ Error sending challenge reminder');
+                } finally {
+                    challengeBtn.disabled = false;
+                    challengeBtn.textContent = '🎯 Challenge Reminder';
+                }
+            });
+        }
+        
+        // Both reminders button
+        if (bothBtn) {
+            bothBtn.addEventListener('click', async () => {
+                try {
+                    bothBtn.disabled = true;
+                    bothBtn.textContent = '🚀 Sending...';
+                    
+                    const response = await fetch(`${API_BASE_URL}/chat/demo/reminders`, {
+                        method: 'POST',
+                        headers: getAuthHeaders()
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        addMessage('system', `✅ ${data.message} Check your chat for both reminders!`);
+                        // Refresh chat to show the new notifications
+                        setTimeout(() => window.location.reload(), 1000);
+                    } else {
+                        addMessage('system', '❌ Failed to send reminders');
+                    }
+                } catch (error) {
+                    console.error('Error sending reminders:', error);
+                    addMessage('system', '❌ Error sending reminders');
+                } finally {
+                    bothBtn.disabled = false;
+                    bothBtn.textContent = '🚀 Both Reminders';
+                }
+            });
+        }
+        
+        // Toggle demo buttons visibility
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', () => {
+                const isHidden = demoContainer.style.display === 'none';
+                demoContainer.style.display = isHidden ? 'block' : 'none';
+                toggleBtn.textContent = isHidden ? 'Hide Demo' : 'Show Demo';
+            });
+        }
+    } else {
+        demoContainer.style.display = 'none';
+    }
+}
+
 // Toggle chat visibility
 function toggleChat() {
     isChatOpen = !isChatOpen;
@@ -203,6 +336,13 @@ function openChat() {
     // Clear notification badge
     hasNewMessage = false;
     chatbotBadge.style.display = 'none';
+    
+    // Check if Quick Actions button should be shown when chat opens
+    setTimeout(() => {
+        if (currentUser) {
+            showPinButton();
+        }
+    }, 300); // Small delay to allow chat to fully open
 }
 
 // Close chat
@@ -323,6 +463,13 @@ async function sendMessage(customMessage = null, displayMessage = null) {
     const displayText = displayMessage || message;
     
     if (!message || isWaitingForResponse) {
+        console.log('Message blocked:', !message ? 'empty message' : 'waiting for response');
+        return;
+    }
+    
+    // Ensure sendButton exists
+    if (!sendButton) {
+        console.error('Send button not found!');
         return;
     }
     
@@ -344,6 +491,7 @@ async function sendMessage(customMessage = null, displayMessage = null) {
     const typingId = showTypingIndicator();
     isWaitingForResponse = true;
     sendButton.disabled = true;
+    console.log('Send button disabled, sending message...');
     
     try {
         const response = await fetch(`${API_BASE_URL}/chat/message`, {
@@ -391,9 +539,15 @@ async function sendMessage(customMessage = null, displayMessage = null) {
         removeTypingIndicator(typingId);
         addMessage('assistant', 'Sorry, I had trouble processing that. Please try again.');
     } finally {
+        // Always re-enable the button
         isWaitingForResponse = false;
-        sendButton.disabled = false;
-        messageInput.focus();
+        if (sendButton) {
+            sendButton.disabled = false;
+            console.log('Send button re-enabled');
+        }
+        if (messageInput) {
+            messageInput.focus();
+        }
     }
 }
 
@@ -411,7 +565,7 @@ function updateUIElements(elements, data = {}) {
     const shouldRemoveActivityButtons = elements.includes('emoji_selector') || elements.includes('reason_selector');
     
     const selectorToRemove = shouldRemoveActivityButtons 
-        ? '.inline-emoji-selector, .inline-reason-selector, .inline-action-buttons, .inline-activity-buttons'
+        ? '.inline-emoji-selector, .inline-reason-selector, .inline-action-buttons, .inline-activity-buttons, .inline-generic-buttons'
         : '.inline-emoji-selector, .inline-reason-selector, .inline-action-buttons';
     
     const existingSelectors = document.querySelectorAll(selectorToRemove);
@@ -422,6 +576,16 @@ function updateUIElements(elements, data = {}) {
             el.remove();
         }
     });
+    
+    // NEW: Check if elements is an array of button objects (not strings)
+    const hasButtonObjects = elements.length > 0 && typeof elements[0] === 'object' && elements[0].type === 'button';
+    
+    if (hasButtonObjects) {
+        // Render generic buttons from backend
+        showInlineGenericButtons(elements);
+        textInputContainer.style.display = 'none';
+        return; // Don't process other element types
+    }
     
     // Show requested elements
     if (elements.includes('emoji_selector')) {
@@ -560,6 +724,41 @@ function showInlineReasonSelector(reasons) {
     
     reasonContainer.appendChild(reasonGrid);
     chatMessages.appendChild(reasonContainer);
+    scrollToBottom();
+}
+
+// Show generic buttons inline (NEW - for activity logging workflow)
+function showInlineGenericButtons(buttons) {
+    const buttonContainer = document.createElement('div');
+    buttonContainer.className = 'message assistant reason-message inline-generic-buttons';
+    
+    const buttonGrid = document.createElement('div');
+    buttonGrid.className = 'inline-reason-grid';
+    
+    buttons.forEach(button => {
+        const btn = document.createElement('button');
+        btn.className = 'inline-reason-btn';
+        btn.textContent = button.text;
+        btn.onclick = () => {
+            // Disable all buttons in this grid
+            buttonGrid.querySelectorAll('button').forEach(b => {
+                b.disabled = true;
+                b.classList.add('disabled');
+            });
+            
+            // Highlight selected button
+            btn.classList.remove('disabled');
+            btn.classList.add('selected');
+            btn.innerHTML = `✓ ${button.text}`;
+            
+            // Send the action value (e.g., "log_activity_category:exercise")
+            sendMessage(button.action, button.text);
+        };
+        buttonGrid.appendChild(btn);
+    });
+    
+    buttonContainer.appendChild(buttonGrid);
+    chatMessages.appendChild(buttonContainer);
     scrollToBottom();
 }
 
@@ -839,6 +1038,7 @@ function showInlineActivityButtons(activities) {
     
     const activityContainer = document.createElement('div');
     activityContainer.className = 'message assistant activity-message inline-activity-buttons';
+    activityContainer.id = 'latest-activity-buttons'; // Add ID for easy reference
     
     const activityGrid = document.createElement('div');
     activityGrid.className = 'activity-grid';
@@ -857,12 +1057,31 @@ function showInlineActivityButtons(activities) {
         btn.innerHTML = `<span class="activity-label">${label}</span>`;
         
         btn.onclick = () => {
-            // Don't do anything if already selected
-            if (btn.classList.contains('selected')) {
+            // Check if this is a logging button (should be clickable multiple times)
+            const isLoggingButton = activityId.startsWith('log_');
+            
+            // For non-logging buttons, prevent multiple clicks
+            if (!isLoggingButton && btn.classList.contains('selected')) {
                 return;
             }
             
-            // Mark this button as selected (but keep it clickable and visible)
+            // For logging buttons, allow multiple clicks but provide visual feedback
+            if (isLoggingButton) {
+                // Add temporary "clicked" animation
+                btn.classList.add('clicked');
+                btn.style.transform = 'scale(0.95)';
+                setTimeout(() => {
+                    btn.classList.remove('clicked');
+                    btn.style.transform = 'scale(1)';
+                }, 200);
+                
+                // Don't add permanent "selected" state for logging buttons
+                // Just send the message and allow clicking again
+                sendMessage(activityId, `Logging ${label}`);
+                return;
+            }
+            
+            // For non-logging buttons, mark as selected (one-time use)
             btn.classList.add('selected');
             btn.innerHTML = `<span class="activity-label">✓ ${label}</span>`;
             
@@ -920,8 +1139,14 @@ function showInlineActivityButtons(activities) {
                     localStorage.setItem('pending_activity', JSON.stringify(activityState));
                 }
                 
-                // Send clear message that user wants to START this activity
-                sendMessage(`I want to ${activityId}`, `Starting ${label}`);
+                // Send message based on button type
+                if (isLoggingButton) {
+                    // For logging buttons, send the ID directly for fast routing
+                    sendMessage(activityId, `Starting ${label}`);
+                } else {
+                    // For activity buttons, send natural language
+                    sendMessage(`I want to ${activityId}`, `Starting ${label}`);
+                }
             }
         };
         
@@ -931,6 +1156,14 @@ function showInlineActivityButtons(activities) {
     activityContainer.appendChild(activityGrid);
     chatMessages.appendChild(activityContainer);
     scrollToBottom();
+    
+    // Track the location of the latest activity buttons
+    lastActivityButtonsLocation = activityContainer;
+    
+    // Show pin button after activity buttons are created
+    setTimeout(() => {
+        showPinButton();
+    }, 1000);
 }
 
 // Add message to chat
@@ -1109,6 +1342,207 @@ function scrollToBottom() {
     if (chatMessages) {
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
+}
+
+// ============================================================================
+// PIN BUTTON - SIMPLE IN-CHAT NAVIGATION TO ACTIVITY BUTTONS
+// ============================================================================
+
+/**
+ * Show pin button above text input when activity buttons are scrolled out of view
+ * Places the button in the marked area as requested
+ */
+function showPinButton() {
+    // Don't show if user not authenticated
+    if (!currentUser) {
+        return;
+    }
+    
+    // Don't show if jump is in progress
+    if (window.jumpInProgress) {
+        return;
+    }
+    
+    // Find all activity buttons in the chat
+    const allActivityButtons = document.querySelectorAll('.inline-activity-buttons');
+    
+    if (allActivityButtons.length === 0) {
+        // No activity buttons exist, don't show pin button
+        return;
+    }
+    
+    // Get the most recent activity buttons
+    const mostRecentActivityButtons = allActivityButtons[allActivityButtons.length - 1];
+    
+    // Update our stored reference
+    lastActivityButtonsLocation = mostRecentActivityButtons;
+    
+    // Check if the most recent activity buttons are currently visible in viewport
+    const rect = mostRecentActivityButtons.getBoundingClientRect();
+    const chatRect = chatMessages.getBoundingClientRect();
+    
+    // More generous visibility check - consider partially visible as visible
+    const isVisible = rect.bottom > chatRect.top && rect.top < chatRect.bottom;
+    const isFullyVisible = rect.top >= chatRect.top && rect.bottom <= chatRect.bottom;
+    
+    console.log('Activity buttons visibility check:', {
+        isVisible,
+        isFullyVisible,
+        rectTop: rect.top,
+        rectBottom: rect.bottom,
+        chatTop: chatRect.top,
+        chatBottom: chatRect.bottom
+    });
+    
+    // Only show pin button if activity buttons are not visible at all
+    if (isVisible) {
+        // Remove existing pin button if activity buttons are visible
+        const existingPin = document.getElementById('pinButton');
+        if (existingPin) {
+            existingPin.remove();
+        }
+        return;
+    }
+    
+    // Remove existing pin button if present (to avoid duplicates)
+    const existingPin = document.getElementById('pinButton');
+    if (existingPin) {
+        return; // Already showing, don't create another
+    }
+    
+    // Create pin button above text input (in the marked area)
+    const pinButton = document.createElement('div');
+    pinButton.id = 'pinButton';
+    pinButton.className = 'quick-actions-bar';
+    pinButton.innerHTML = `
+        <div class="quick-actions-button" onclick="jumpToActivityButtons()">
+            <span class="quick-actions-icon">⚡</span>
+            <span class="quick-actions-text">Quick Actions</span>
+            <span class="quick-actions-arrow">↑</span>
+        </div>
+    `;
+    
+    // Insert above text input container
+    const textInputContainer = document.getElementById('textInputContainer');
+    if (textInputContainer && textInputContainer.parentNode) {
+        textInputContainer.parentNode.insertBefore(pinButton, textInputContainer);
+    }
+}
+
+/**
+ * Jump directly to the most recent activity buttons with smart detection
+ * Make this function globally accessible and more reliable
+ */
+window.jumpToActivityButtons = function() {
+    console.log('jumpToActivityButtons called');
+    
+    // Prevent multiple rapid clicks
+    if (window.jumpInProgress) {
+        console.log('Jump already in progress, ignoring click');
+        return;
+    }
+    
+    window.jumpInProgress = true;
+    
+    // First, try to find the most recent activity buttons in the chat
+    const allActivityButtons = document.querySelectorAll('.inline-activity-buttons');
+    let targetActivityButtons = null;
+    
+    if (allActivityButtons.length > 0) {
+        // Get the last (most recent) activity buttons
+        targetActivityButtons = allActivityButtons[allActivityButtons.length - 1];
+        console.log('Found activity buttons via querySelector:', targetActivityButtons);
+    } else if (lastActivityButtonsLocation) {
+        // Fallback to stored reference
+        targetActivityButtons = lastActivityButtonsLocation;
+        console.log('Using stored lastActivityButtonsLocation:', targetActivityButtons);
+    }
+    
+    if (!targetActivityButtons) {
+        console.log('No activity buttons found to scroll to');
+        window.jumpInProgress = false;
+        return;
+    }
+    
+    // Update the stored reference to the most recent one
+    lastActivityButtonsLocation = targetActivityButtons;
+    
+    console.log('Scrolling to activity buttons:', targetActivityButtons);
+    
+    // Remove the pin button immediately to prevent double-clicks
+    const pinButton = document.getElementById('pinButton');
+    if (pinButton) {
+        pinButton.remove();
+    }
+    
+    // Smooth scroll to the activity buttons
+    targetActivityButtons.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center'
+    });
+    
+    // Add highlight effect to show where we jumped
+    targetActivityButtons.classList.add('highlighted');
+    
+    // Use a more reliable method to detect scroll completion
+    let scrollCheckCount = 0;
+    const maxScrollChecks = 20; // Maximum checks (2 seconds at 100ms intervals)
+    
+    const checkScrollComplete = () => {
+        scrollCheckCount++;
+        
+        // Check if activity buttons are now visible
+        const rect = targetActivityButtons.getBoundingClientRect();
+        const chatRect = chatMessages.getBoundingClientRect();
+        const isVisible = rect.top >= chatRect.top && rect.bottom <= chatRect.bottom;
+        
+        if (isVisible || scrollCheckCount >= maxScrollChecks) {
+            // Scroll is complete or we've waited long enough
+            console.log('Scroll completed, activity buttons visible:', isVisible);
+            
+            if (targetActivityButtons) {
+                targetActivityButtons.classList.remove('highlighted');
+            }
+            
+            // Reset jump progress after a longer delay to prevent immediate re-showing of pin button
+            setTimeout(() => {
+                window.jumpInProgress = false;
+                
+                // Only check for pin button after user has had time to interact with activity buttons
+                setTimeout(() => {
+                    if (isChatOpen) {
+                        showPinButton();
+                    }
+                }, 3000); // Wait 3 seconds before checking if pin button should reappear
+            }, 500);
+        } else {
+            // Continue checking
+            setTimeout(checkScrollComplete, 100);
+        }
+    };
+    
+    // Start checking after a brief delay to allow scroll animation to begin
+    setTimeout(checkScrollComplete, 200);
+};
+
+/**
+ * Check scroll position and show pin button if needed
+ */
+function handleChatScroll() {
+    if (!isChatOpen || !currentUser) {
+        return;
+    }
+    
+    // Debounce scroll events
+    clearTimeout(window.scrollCheckTimeout);
+    window.scrollCheckTimeout = setTimeout(() => {
+        showPinButton();
+    }, 200); // Reduced delay for more responsive behavior
+}
+
+// Add scroll listener to chat messages
+if (chatMessages) {
+    chatMessages.addEventListener('scroll', handleChatScroll);
 }
 
 /**

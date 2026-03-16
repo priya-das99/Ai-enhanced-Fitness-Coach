@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import logging
+import threading
 from .session_summary import SessionSummary
 from .conversation_depth_tracker import ConversationDepthTracker
 
@@ -69,6 +70,7 @@ class WorkflowState:
     
     def __init__(self, user_id: int):
         self.user_id = user_id
+        self._lock = threading.Lock()  # Thread-safe state mutations
         self.state = ConversationState.IDLE
         self.active_workflow: Optional[str] = None
         self.workflow_data: Dict[str, Any] = {}
@@ -90,155 +92,172 @@ class WorkflowState:
         # - Time-based decay (depth decreases over time)
     
     def start_workflow(self, workflow_name: str, initial_data: Dict[str, Any] = None):
-        """Start a new workflow"""
-        if self.active_workflow:
-            logger.warning(f"User {self.user_id}: Attempted to start {workflow_name} while {self.active_workflow} is active")
-            raise ValueError(f"Cannot start {workflow_name}: {self.active_workflow} is already active")
-        
-        self.state = ConversationState.WORKFLOW_ACTIVE
-        self.active_workflow = workflow_name
-        self.workflow_data = initial_data or {}
-        
-        # Track workflow start time for timeout detection
-        self.workflow_data['last_activity_time'] = datetime.now().isoformat()
-        self.workflow_step = None
-        self.last_updated = datetime.now()
-        
-        logger.info(f"User {self.user_id}: Started workflow '{workflow_name}'")
+        """Start a new workflow (thread-safe)"""
+        with self._lock:
+            if self.active_workflow:
+                logger.warning(f"User {self.user_id}: Attempted to start {workflow_name} while {self.active_workflow} is active")
+                raise ValueError(f"Cannot start {workflow_name}: {self.active_workflow} is already active")
+            
+            self.state = ConversationState.WORKFLOW_ACTIVE
+            self.active_workflow = workflow_name
+            self.workflow_data = initial_data or {}
+            
+            # Track workflow start time for timeout detection
+            self.workflow_data['last_activity_time'] = datetime.now().isoformat()
+            self.workflow_step = None
+            self.last_updated = datetime.now()
+            
+            logger.info(f"User {self.user_id}: Started workflow '{workflow_name}'")
     
     def update_workflow_step(self, step: str, data: Dict[str, Any] = None):
-        """Update current workflow step"""
-        if not self.active_workflow:
-            raise ValueError("No active workflow to update")
-        
-        self.workflow_step = step
-        self.workflow_data['step'] = step  # Also update in workflow_data
-        if data:
-            self.workflow_data.update(data)
-        self.last_updated = datetime.now()
-        
-        logger.info(f"User {self.user_id}: Workflow '{self.active_workflow}' -> step '{step}'")
+        """Update current workflow step (thread-safe)"""
+        with self._lock:
+            if not self.active_workflow:
+                raise ValueError("No active workflow to update")
+            
+            self.workflow_step = step
+            self.workflow_data['step'] = step  # Also update in workflow_data
+            if data:
+                self.workflow_data.update(data)
+            self.last_updated = datetime.now()
+            
+            logger.info(f"User {self.user_id}: Workflow '{self.active_workflow}' -> step '{step}'")
     
     def set_state(self, state: ConversationState):
-        """Update conversation state"""
-        old_state = self.state
-        self.state = state
-        self.last_updated = datetime.now()
-        
-        logger.info(f"User {self.user_id}: State transition {old_state.value} -> {state.value}")
+        """Update conversation state (thread-safe)"""
+        with self._lock:
+            old_state = self.state
+            self.state = state
+            self.last_updated = datetime.now()
+            
+            logger.info(f"User {self.user_id}: State transition {old_state.value} -> {state.value}")
     
     def complete_workflow(self):
-        """Complete and reset workflow"""
-        workflow_name = self.active_workflow
-        self.state = ConversationState.IDLE
-        self.active_workflow = None
-        self.workflow_data = {}
-        self.workflow_step = None
-        self.last_updated = datetime.now()
-        # Keep conversation history for context (limit to last 10 messages)
-        self.conversation_history = self.conversation_history[-10:]
-        
-        logger.info(f"User {self.user_id}: Completed workflow '{workflow_name}'")
+        """Complete and reset workflow (thread-safe)"""
+        with self._lock:
+            workflow_name = self.active_workflow
+            self.state = ConversationState.IDLE
+            self.active_workflow = None
+            self.workflow_data = {}
+            self.workflow_step = None
+            self.last_updated = datetime.now()
+            # Keep conversation history for context (limit to last 10 messages)
+            self.conversation_history = self.conversation_history[-10:]
+            
+            logger.info(f"User {self.user_id}: Completed workflow '{workflow_name}'")
     
     def get_workflow_data(self, key: str, default=None):
-        """Get workflow data by key"""
-        return self.workflow_data.get(key, default)
+        """Get workflow data by key (thread-safe read)"""
+        with self._lock:
+            return self.workflow_data.get(key, default)
     
     def set_workflow_data(self, key: str, value):
-        """Set workflow data by key"""
-        self.workflow_data[key] = value
-        self.last_updated = datetime.now()
-        logger.info(f"User {self.user_id}: Set workflow data '{key}' = {value}")
+        """Set workflow data by key (thread-safe)"""
+        with self._lock:
+            self.workflow_data[key] = value
+            self.last_updated = datetime.now()
+            logger.info(f"User {self.user_id}: Set workflow data '{key}' = {value}")
     
     def is_idle(self) -> bool:
-        """Check if in IDLE state"""
-        return self.state == ConversationState.IDLE
+        """Check if in IDLE state (thread-safe read)"""
+        with self._lock:
+            return self.state == ConversationState.IDLE
     
     def add_message(self, role: str, content: str):
-        """Add message to conversation history"""
-        self.conversation_history.append({
-            'role': role,
-            'content': content
-        })
-        # Keep only last 20 messages (10 exchanges)
-        if len(self.conversation_history) > 20:
-            self.conversation_history = self.conversation_history[-20:]
-        self.last_updated = datetime.now()
+        """Add message to conversation history (thread-safe)"""
+        with self._lock:
+            self.conversation_history.append({
+                'role': role,
+                'content': content
+            })
+            # Keep only last 20 messages (10 exchanges)
+            if len(self.conversation_history) > 20:
+                self.conversation_history = self.conversation_history[-20:]
+            self.last_updated = datetime.now()
     
     def get_conversation_history(self, limit: int = 10) -> List[Dict[str, str]]:
-        """Get recent conversation history"""
-        return self.conversation_history[-limit:]
+        """Get recent conversation history (thread-safe read)"""
+        with self._lock:
+            return self.conversation_history[-limit:]
     
     def clear_conversation_history(self):
-        """Clear conversation history"""
-        self.conversation_history = []
-        logger.info(f"User {self.user_id}: Cleared conversation history")
+        """Clear conversation history (thread-safe)"""
+        with self._lock:
+            self.conversation_history = []
+            logger.info(f"User {self.user_id}: Cleared conversation history")
     
     def reset_on_logout(self):
-        """Reset state on user logout"""
+        """Reset state on user logout (thread-safe)"""
+        # Note: complete_workflow and clear_conversation_history already have locks
         self.complete_workflow()
         self.clear_conversation_history()
         logger.info(f"User {self.user_id}: Reset state on logout")
     
     def on_activity_completed(self, activity_type: str):
         """
-        Reset depth when user completes activity.
+        Reset depth when user completes activity (thread-safe).
         Handles partial matches and variations.
         """
-        # Direct match
-        topic = self.ACTIVITY_TO_TOPIC.get(activity_type)
-        
-        # Partial match fallback
-        if not topic:
-            activity_lower = activity_type.lower()
-            for act_type, topic_name in self.ACTIVITY_TO_TOPIC.items():
-                if act_type in activity_lower or activity_lower in act_type:
-                    topic = topic_name
-                    break
-        
-        # Reset if topic found
-        if topic:
-            self.depth_tracker.reset_topic(topic)
-            logger.info(f"User {self.user_id}: Activity '{activity_type}' → Topic '{topic}' depth reset")
-        else:
-            logger.debug(f"User {self.user_id}: Activity '{activity_type}' has no topic mapping")
+        with self._lock:
+            # Direct match
+            topic = self.ACTIVITY_TO_TOPIC.get(activity_type)
+            
+            # Partial match fallback
+            if not topic:
+                activity_lower = activity_type.lower()
+                for act_type, topic_name in self.ACTIVITY_TO_TOPIC.items():
+                    if act_type in activity_lower or activity_lower in act_type:
+                        topic = topic_name
+                        break
+            
+            # Reset if topic found
+            if topic:
+                self.depth_tracker.reset_topic(topic)
+                logger.info(f"User {self.user_id}: Activity '{activity_type}' → Topic '{topic}' depth reset")
+            else:
+                logger.debug(f"User {self.user_id}: Activity '{activity_type}' has no topic mapping")
     
     def get_depth_tracker(self) -> ConversationDepthTracker:
-        """Get user's depth tracker"""
-        return self.depth_tracker
+        """Get user's depth tracker (thread-safe read)"""
+        with self._lock:
+            return self.depth_tracker
     
     def track_rejection(self):
-        """Track a rejection (works across all workflows)"""
+        """Track a rejection (works across all workflows, thread-safe)"""
         from datetime import datetime, timedelta
         
-        # Reset counter if last rejection was more than 5 minutes ago
-        if self.last_rejection_time:
-            time_since_last = datetime.now() - self.last_rejection_time
-            if time_since_last > timedelta(minutes=5):
-                self.global_rejection_count = 0
-                logger.info(f"User {self.user_id}: Reset rejection count (timeout)")
-        
-        self.global_rejection_count += 1
-        self.last_rejection_time = datetime.now()
-        logger.info(f"User {self.user_id}: Rejection count = {self.global_rejection_count}")
+        with self._lock:
+            # Reset counter if last rejection was more than 5 minutes ago
+            if self.last_rejection_time:
+                time_since_last = datetime.now() - self.last_rejection_time
+                if time_since_last > timedelta(minutes=5):
+                    self.global_rejection_count = 0
+                    logger.info(f"User {self.user_id}: Reset rejection count (timeout)")
+            
+            self.global_rejection_count += 1
+            self.last_rejection_time = datetime.now()
+            logger.info(f"User {self.user_id}: Rejection count = {self.global_rejection_count}")
     
     def get_rejection_count(self) -> int:
-        """Get current rejection count"""
-        return self.global_rejection_count
+        """Get current rejection count (thread-safe read)"""
+        with self._lock:
+            return self.global_rejection_count
     
     def reset_rejection_count(self):
-        """Reset rejection counter"""
-        self.global_rejection_count = 0
-        self.last_rejection_time = None
-        logger.info(f"User {self.user_id}: Reset rejection count")
+        """Reset rejection counter (thread-safe)"""
+        with self._lock:
+            self.global_rejection_count = 0
+            self.last_rejection_time = None
+            logger.info(f"User {self.user_id}: Reset rejection count")
     
     def should_stop_suggesting(self) -> bool:
-        """Check if we should stop suggesting based on rejection count"""
-        return self.global_rejection_count >= 2
+        """Check if we should stop suggesting based on rejection count (thread-safe read)"""
+        with self._lock:
+            return self.global_rejection_count >= 2
     
     def is_workflow_stale(self, timeout_minutes: int = 5) -> bool:
         """
-        Check if workflow has been inactive too long
+        Check if workflow has been inactive too long (thread-safe read)
         
         Args:
             timeout_minutes: Minutes of inactivity before workflow is considered stale
@@ -246,45 +265,48 @@ class WorkflowState:
         Returns:
             True if workflow should be timed out
         """
-        if not self.active_workflow:
-            return False
-            
-        last_activity_str = self.workflow_data.get('last_activity_time')
-        if not last_activity_str:
-            # No activity time recorded - assume stale
-            return True
-            
-        try:
-            last_activity = datetime.fromisoformat(last_activity_str)
-            elapsed = datetime.now() - last_activity
-            is_stale = elapsed.total_seconds() > (timeout_minutes * 60)
-            
-            if is_stale:
-                logger.info(f"User {self.user_id}: Workflow '{self.active_workflow}' is stale ({elapsed.total_seconds():.0f}s)")
-            
-            return is_stale
-            
-        except (ValueError, TypeError) as e:
-            logger.warning(f"User {self.user_id}: Invalid last_activity_time format: {e}")
-            return True  # Assume stale if we can't parse the time
+        with self._lock:
+            if not self.active_workflow:
+                return False
+                
+            last_activity_str = self.workflow_data.get('last_activity_time')
+            if not last_activity_str:
+                # No activity time recorded - assume stale
+                return True
+                
+            try:
+                last_activity = datetime.fromisoformat(last_activity_str)
+                elapsed = datetime.now() - last_activity
+                is_stale = elapsed.total_seconds() > (timeout_minutes * 60)
+                
+                if is_stale:
+                    logger.info(f"User {self.user_id}: Workflow '{self.active_workflow}' is stale ({elapsed.total_seconds():.0f}s)")
+                
+                return is_stale
+                
+            except (ValueError, TypeError) as e:
+                logger.warning(f"User {self.user_id}: Invalid last_activity_time format: {e}")
+                return True  # Assume stale if we can't parse the time
     
     def update_activity_time(self):
-        """Update the last activity time for timeout tracking"""
-        self.workflow_data['last_activity_time'] = datetime.now().isoformat()
-        self.last_updated = datetime.now()
+        """Update the last activity time for timeout tracking (thread-safe)"""
+        with self._lock:
+            self.workflow_data['last_activity_time'] = datetime.now().isoformat()
+            self.last_updated = datetime.now()
     
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize to dictionary"""
-        return {
-            'user_id': self.user_id,
-            'state': self.state.value,
-            'active_workflow': self.active_workflow,
-            'workflow_data': self.workflow_data,
-            'workflow_step': self.workflow_step,
-            'last_updated': self.last_updated.isoformat(),
-            'conversation_history': self.conversation_history,
-            'global_rejection_count': self.global_rejection_count
-        }
+        """Serialize to dictionary (thread-safe read)"""
+        with self._lock:
+            return {
+                'user_id': self.user_id,
+                'state': self.state.value,
+                'active_workflow': self.active_workflow,
+                'workflow_data': self.workflow_data.copy(),  # Copy to prevent external mutation
+                'workflow_step': self.workflow_step,
+                'last_updated': self.last_updated.isoformat(),
+                'conversation_history': self.conversation_history.copy(),  # Copy to prevent external mutation
+                'global_rejection_count': self.global_rejection_count
+            }
 
 # In-memory state storage (per user)
 _user_states: Dict[int, WorkflowState] = {}

@@ -65,6 +65,32 @@ def extract_mood_from_message(message: str) -> tuple:
         - mood_emoji: str (e.g., '😟') or None if can't determine
         - confidence: 'high' or 'low'
     """
+    
+    # CRITICAL FIX: Don't extract mood from intent-only phrases
+    # These phrases express desire to log, not actual mood
+    intent_only_phrases = [
+        'i want to log mood',
+        'i want to log my mood',
+        'i want to log_mood',  # Handle underscore version
+        'log mood',
+        'log my mood',
+        'log_mood',  # Handle underscore version
+        'track mood',
+        'track my mood',
+        'record mood',
+        'record my mood',
+        'can i log mood',
+        'how do i log mood',
+        'let me log mood'
+    ]
+    
+    # Normalize message: lowercase and replace underscores with spaces
+    message_lower = message.lower().strip().replace('_', ' ')
+    for phrase in intent_only_phrases:
+        if phrase in message_lower:
+            logger.info(f"🚫 Skipping mood extraction - intent-only phrase detected: '{message}'")
+            return None, 'low'
+    
     llm_service = get_llm_service()
     
     # Try LLM first for better accuracy (handles typos and variations)

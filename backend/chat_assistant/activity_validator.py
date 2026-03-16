@@ -15,14 +15,14 @@ class ActivityValidator:
     VALIDATION_RULES = {
         'water': {
             'min': 1,
-            'max': 20,
+            'max': 20,  # Per single entry limit
             'typical_range': (6, 12),
             'unit': 'glasses',
-            'warning_threshold': 15,
+            'warning_threshold': 15,  # Warn at 15 glasses in single entry
             'decimal_allowed': False,
             'context': '1 glass = ~250ml',
-            'health_note': 'Typical daily intake is 6-12 glasses',
-            'daily_limit': 25  # ~6.25L maximum per day
+            'health_note': 'Recommended daily intake is 8 glasses (2L)',
+            'daily_limit': 40  # Maximum 40 glasses per day (~10L)
         },
         
         'sleep': {
@@ -108,6 +108,13 @@ class ActivityValidator:
             # Unknown activity type - allow it (extensibility)
             logger.warning(f"No validation rules for activity type: {activity_type}")
             return {'valid': True}
+        
+        # SAFETY CHECK: Handle None values
+        if value is None:
+            return {
+                'valid': False,
+                'message': f"Please provide a valid number for {activity_type}."
+            }
         
         # Check for negative values
         if value < 0:

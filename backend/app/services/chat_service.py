@@ -122,7 +122,7 @@ class ChatService:
             return None
     
     def process_message(self, user_id: int, message: str) -> Dict:
-        """Process user message"""
+        """Process user message with comprehensive error handling"""
         # Get or create session
         session_id = self.get_or_create_session(user_id)
         
@@ -134,9 +134,32 @@ class ChatService:
             sender='user'
         )
         
-        # Import here to avoid circular imports
-        from chat_assistant.chat_engine_workflow import process_message
-        response = process_message(user_id, message)
+        try:
+            # Import here to avoid circular imports
+            from chat_assistant.chat_engine_workflow import process_message
+            response = process_message(user_id, message)
+            
+        except Exception as e:
+            # If chat engine fails, use fallback response
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Chat engine failed for user {user_id}: {e}", exc_info=True)
+            
+            # Generate fallback response
+            from chat_assistant.fallback_responses import get_fallback_response
+            
+            # Determine context from message
+            message_lower = message.lower()
+            if any(word in message_lower for word in ['hello', 'hi', 'hey', 'start']):
+                context = "greeting"
+            elif any(word in message_lower for word in ['feel', 'mood', 'emotion', 'happy', 'sad', 'stress']):
+                context = "mood"
+            elif any(word in message_lower for word in ['water', 'exercise', 'sleep', 'walk', 'run']):
+                context = "activity"
+            else:
+                context = "general"
+            
+            response = get_fallback_response(message, context)
         
         # Save bot response with session
         self.chat_repo.save_message_with_session(
@@ -147,7 +170,8 @@ class ChatService:
             metadata={
                 'ui_elements': response.get('ui_elements', []),
                 'state': response.get('state', 'idle'),
-                'completed': response.get('completed', False)
+                'completed': response.get('completed', False),
+                'fallback_used': response.get('fallback_used', False)
             }
         )
         

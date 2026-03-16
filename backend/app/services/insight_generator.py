@@ -1,457 +1,278 @@
-# app/services/insight_generator.py
 """
-Deterministic Insight Generator
-Converts behavior metrics → structured insight objects
-NO LLM. Pure rule-based logic.
+Insight Generator Service - Creates weekly insights and recommendations
+
+Generates:
+- Weekly mood summaries
+- Activity effectiveness reports
+- Pattern-based recommendations
+- Personalized tips
 """
 
-import logging
-from typing import List, Dict, Optional
 from datetime import datetime, timedelta
-from .pattern_detector import PatternDetector
-from .behavior_scorer import get_behavior_scorer
-
-logger = logging.getLogger(__name__)
-
-
-class InsightObject:
-    """Structured insight object - deterministic, not LLM-generated"""
-    
-    def __init__(
-        self,
-        insight_type: str,
-        severity: str,
-        priority: int,
-        data: Dict,
-        context: str
-    ):
-        self.insight_type = insight_type
-        self.severity = severity  # 'low', 'moderate', 'high'
-        self.priority = priority  # 1 (highest) to 5 (lowest)
-        self.data = data
-        self.context = context  # 'stress', 'activity', 'engagement', 'celebration'
-    
-    def to_dict(self) -> Dict:
-        return {
-            'insight_type': self.insight_type,
-            'severity': self.severity,
-            'priority': self.priority,
-            'data': self.data,
-            'context': self.context
-        }
+from typing import Dict, List, Optional
+from sqlalchemy.orm import Session
+from sqlalchemy import func, and_
+from app.models.user import MoodLog, ActivityCompletion
+from app.models.activity import ActivityFeedback
+from app.services.pattern_detector import PatternDetector
 
 
 class InsightGenerator:
-    """
-    Deterministic insight generation from behavior patterns.
+    """Generates insights from user data"""
     
-    Rules:
-    1. Max 1 insight per response (avoid overload)
-    2. Priority-based selection
-    3. Rate limiting (don't repeat same insight within 24h)
-    4. Context-aware (only relevant insights)
-    """
+    def __init__(self, db: Session):
+        self.db = db
+        self.pattern_detector = PatternDetector(db)
     
-    # Insight type definitions with thresholds
-    INSIGHT_RULES = {
-        'prolonged_stress_pattern': {
-            'threshold': {'consecutive_stressed_days': 3},
-            'severity_levels': {
-                'moderate': 3,
-                'high': 5
-            },
-            'priority': 1,  # Highest
-            'context': 'stress'
-        },
-        'activity_decline': {
-            'threshold': {'activity_drop_percentage': 50},
-            'severity_levels': {
-                'moderate': 50,
-                'high': 75
-            },
-            'priority': 2,
-            'context': 'activity'
-        },
-        'proven_solution_available': {
-            'threshold': {'best_activity_exists': True, 'current_stressed': True},
-            'severity_levels': {
-                'moderate': 1
-            },
-            'priority': 1,  # High priority - we know what works
-            'context': 'stress'
-        },
-        'low_engagement': {
-            'threshold': {'acceptance_rate': 30, 'min_shown': 10},
-            'severity_levels': {
-                'moderate': 30,
-                'high': 15
-            },
-            'priority': 3,
-            'context': 'engagement'
-        },
-        'activity_streak': {
-            'threshold': {'streak_days': 7},
-            'severity_levels': {
-                'low': 7,
-                'moderate': 14
-            },
-            'priority': 4,  # Lower priority - celebration
-            'context': 'celebration'
-        },
-        'stress_inactivity_cycle': {
-            'threshold': {'consecutive_stressed_days': 3, 'activity_drop_percentage': 40},
-            'severity_levels': {
-                'high': 1  # Always high if detected
-            },
-            'priority': 1,  # Highest - dangerous pattern
-            'context': 'stress'
-        }
-    }
-    
-    def __init__(self):
-        self.pattern_detector = PatternDetector()
-        self.behavior_scorer = get_behavior_scorer()
-        self._insight_cache = {}  # user_id -> {insight_type: last_shown_timestamp}
-    
-    def generate_insights(
-        self,
-        user_id: int,
-        current_mood: Optional[str] = None,
-        current_context: Optional[str] = None
-    ) -> List[InsightObject]:
-        """
-        Generate prioritized insights for user.
+    def generate_weekly_insight(self, user_id: int) -> Dict:
+        """Generate comprehensive weekly insight"""
+        one_week_ago = datetime.utcnow() - timedelta(days=7)
+        two_weeks_ago = datetime.utcnow() - timedelta(days=14)
         
-        Args:
-            user_id: User ID
-            current_mood: Current mood emoji (optional)
-            current_context: Current context ('stress', 'tired', etc.)
-            
-        Returns:
-            List of InsightObjects, sorted by priority
-        """
-        logger.info(f"Generating insights for user {user_id}")
-        
-        # Step 1: Detect all patterns (rule-based)
-        patterns = self.pattern_detector.detect_all_patterns(user_id)
-        
-        # Step 2: Convert patterns to insight objects
-        insights = []
-        
-        # Check each insight rule
-        if self._check_prolonged_stress(patterns):
-            insights.append(self._create_prolonged_stress_insight(patterns))
-        
-        if self._check_activity_decline(patterns):
-            insights.append(self._create_activity_decline_insight(patterns))
-        
-        if self._check_proven_solution(patterns, current_mood):
-            insights.append(self._create_proven_solution_insight(patterns))
-        
-        if self._check_low_engagement(patterns):
-            insights.append(self._create_low_engagement_insight(patterns))
-        
-        if self._check_activity_streak(patterns):
-            insights.append(self._create_activity_streak_insight(patterns))
-        
-        if self._check_stress_inactivity_cycle(patterns):
-            insights.append(self._create_stress_inactivity_cycle_insight(patterns))
-        
-        # Check for improvements (positive insights)
-        improvement_insight = self._create_improvement_insight(patterns)
-        if improvement_insight:
-            insights.append(improvement_insight)
-        
-        # Step 3: Filter by rate limiting
-        insights = self._apply_rate_limiting(user_id, insights)
-        
-        # Step 4: Filter by context relevance
-        if current_context:
-            insights = self._filter_by_context(insights, current_context)
-        
-        # Step 5: Sort by priority
-        insights.sort(key=lambda x: x.priority)
-        
-        logger.info(f"Generated {len(insights)} insights for user {user_id}")
-        
-        return insights
-    
-    def get_top_insight(
-        self,
-        user_id: int,
-        current_mood: Optional[str] = None,
-        current_context: Optional[str] = None
-    ) -> Optional[InsightObject]:
-        """Get single highest priority insight"""
-        insights = self.generate_insights(user_id, current_mood, current_context)
-        return insights[0] if insights else None
-    
-    # ===== INSIGHT CHECKERS (Deterministic Rules) =====
-    
-    def _check_prolonged_stress(self, patterns: Dict) -> bool:
-        """Check if user has prolonged stress pattern"""
-        mood_patterns = patterns['mood_patterns']
-        threshold = self.INSIGHT_RULES['prolonged_stress_pattern']['threshold']
-        return mood_patterns['consecutive_negative_days'] >= threshold['consecutive_stressed_days']
-    
-    def _check_activity_decline(self, patterns: Dict) -> bool:
-        """Check if user has activity decline"""
-        activity_patterns = patterns['activity_patterns']
-        threshold = self.INSIGHT_RULES['activity_decline']['threshold']
-        return activity_patterns['activity_drop_percentage'] >= threshold['activity_drop_percentage']
-    
-    def _check_proven_solution(self, patterns: Dict, current_mood: Optional[str]) -> bool:
-        """Check if proven solution exists for current state"""
-        effectiveness = patterns['effectiveness_patterns']
-        is_stressed = current_mood in ['😟', '😰', '😢'] if current_mood else False
-        return effectiveness['best_for_stress'] is not None and is_stressed
-    
-    def _check_low_engagement(self, patterns: Dict) -> bool:
-        """Check if user has low engagement"""
-        engagement = patterns['engagement_patterns']
-        rule = self.INSIGHT_RULES['low_engagement']
-        return (
-            engagement['acceptance_rate'] < rule['threshold']['acceptance_rate'] and
-            engagement.get('total_shown', 0) >= rule['threshold']['min_shown']
-        )
-    
-    def _check_activity_streak(self, patterns: Dict) -> bool:
-        """Check if user has activity streak"""
-        activity_patterns = patterns['activity_patterns']
-        threshold = self.INSIGHT_RULES['activity_streak']['threshold']
-        return activity_patterns['streak'] >= threshold['streak_days']
-    
-    def _check_stress_inactivity_cycle(self, patterns: Dict) -> bool:
-        """Check for dangerous stress + inactivity cycle"""
-        mood_patterns = patterns['mood_patterns']
-        activity_patterns = patterns['activity_patterns']
-        rule = self.INSIGHT_RULES['stress_inactivity_cycle']['threshold']
-        
-        return (
-            mood_patterns['consecutive_negative_days'] >= rule['consecutive_stressed_days'] and
-            activity_patterns['activity_drop_percentage'] >= rule['activity_drop_percentage']
-        )
-    
-    # ===== INSIGHT CREATORS (Structured Objects) =====
-    
-    def _create_prolonged_stress_insight(self, patterns: Dict) -> InsightObject:
-        """Create prolonged stress insight object"""
-        days = patterns['mood_patterns']['consecutive_negative_days']
-        reason = patterns['mood_patterns']['recurring_reason']
-        
-        severity = 'high' if days >= 5 else 'moderate'
-        
-        return InsightObject(
-            insight_type='prolonged_stress_pattern',
-            severity=severity,
-            priority=1,
-            data={
-                'consecutive_days': days,
-                'recurring_reason': reason
-            },
-            context='stress'
-        )
-    
-    def _create_activity_decline_insight(self, patterns: Dict) -> InsightObject:
-        """Create activity decline insight object"""
-        drop_pct = patterns['activity_patterns']['activity_drop_percentage']
-        current = patterns['activity_patterns']['current_week_count']
-        baseline = patterns['activity_patterns']['baseline_per_week']
-        
-        severity = 'high' if drop_pct >= 75 else 'moderate'
-        
-        return InsightObject(
-            insight_type='activity_decline',
-            severity=severity,
-            priority=2,
-            data={
-                'drop_percentage': drop_pct,
-                'current_week': current,
-                'baseline': baseline
-            },
-            context='activity'
-        )
-    
-    def _create_proven_solution_insight(self, patterns: Dict) -> InsightObject:
-        """Create proven solution insight object"""
-        best = patterns['effectiveness_patterns']['best_for_stress']
-        
-        return InsightObject(
-            insight_type='proven_solution_available',
-            severity='moderate',
-            priority=1,
-            data={
-                'activity_name': best['name'],
-                'activity_id': best['id'],
-                'times_done': best['times_done'],
-                'avg_rating': best['avg_rating']
-            },
-            context='stress'
-        )
-    
-    def _create_low_engagement_insight(self, patterns: Dict) -> InsightObject:
-        """Create low engagement insight object"""
-        rate = patterns['engagement_patterns']['acceptance_rate']
-        
-        severity = 'high' if rate < 15 else 'moderate'
-        
-        return InsightObject(
-            insight_type='low_engagement',
-            severity=severity,
-            priority=3,
-            data={
-                'acceptance_rate': rate
-            },
-            context='engagement'
-        )
-    
-    def _create_activity_streak_insight(self, patterns: Dict) -> InsightObject:
-        """Create activity streak insight object"""
-        streak = patterns['activity_patterns']['streak']
-        
-        severity = 'moderate' if streak >= 14 else 'low'
-        
-        return InsightObject(
-            insight_type='activity_streak',
-            severity=severity,
-            priority=4,
-            data={
-                'streak_days': streak
-            },
-            context='celebration'
-        )
-    
-    def _create_improvement_insight(self, patterns: Dict) -> InsightObject:
-        """Create improvement trend insight"""
-        activity_patterns = patterns['activity_patterns']
-        health_patterns = patterns.get('health_patterns', {})
-        
-        improvements = []
-        
-        # Check activity improvement
-        current = activity_patterns['current_week_count']
-        baseline = activity_patterns['baseline_per_week']
-        if baseline > 0 and current > baseline * 1.2:  # 20% improvement
-            improvement_pct = ((current - baseline) / baseline) * 100
-            improvements.append({
-                'type': 'activity',
-                'percentage': improvement_pct,
-                'current': current,
-                'baseline': baseline
-            })
-        
-        # Check sleep improvement
-        sleep_current = health_patterns.get('sleep_current_avg', 0)
-        sleep_baseline = health_patterns.get('sleep_baseline_avg', 0)
-        if sleep_baseline > 0 and sleep_current > sleep_baseline * 1.1:  # 10% improvement
-            improvement_pct = ((sleep_current - sleep_baseline) / sleep_baseline) * 100
-            improvements.append({
-                'type': 'sleep',
-                'percentage': improvement_pct,
-                'current': sleep_current,
-                'baseline': sleep_baseline
-            })
-        
-        # Check water improvement
-        water_current = health_patterns.get('water_current_avg', 0)
-        water_baseline = health_patterns.get('water_baseline_avg', 0)
-        if water_baseline > 0 and water_current > water_baseline * 1.2:  # 20% improvement
-            improvement_pct = ((water_current - water_baseline) / water_baseline) * 100
-            improvements.append({
-                'type': 'water',
-                'percentage': improvement_pct,
-                'current': water_current,
-                'baseline': water_baseline
-            })
-        
-        if improvements:
-            return InsightObject(
-                insight_type='improvement_trend',
-                severity='low',
-                priority=4,
-                data={
-                    'improvements': improvements
-                },
-                context='celebration'
+        # Get this week's data
+        this_week_moods = self.db.query(MoodLog).filter(
+            and_(
+                MoodLog.user_id == user_id,
+                MoodLog.created_at >= one_week_ago
             )
+        ).all()
         
-        return None
-    
-    def _create_stress_inactivity_cycle_insight(self, patterns: Dict) -> InsightObject:
-        """Create stress-inactivity cycle insight object"""
-        days = patterns['mood_patterns']['consecutive_negative_days']
-        drop_pct = patterns['activity_patterns']['activity_drop_percentage']
+        this_week_activities = self.db.query(ActivityCompletion).filter(
+            and_(
+                ActivityCompletion.user_id == user_id,
+                ActivityCompletion.completed_at >= one_week_ago
+            )
+        ).all()
         
-        return InsightObject(
-            insight_type='stress_inactivity_cycle',
-            severity='high',
-            priority=1,
-            data={
-                'stressed_days': days,
-                'activity_drop': drop_pct
-            },
-            context='stress'
-        )
-    
-    # ===== FILTERING & RATE LIMITING =====
-    
-    def _apply_rate_limiting(self, user_id: int, insights: List[InsightObject]) -> List[InsightObject]:
-        """
-        Filter out insights shown recently (within 24h).
-        Prevents repetitive insights.
-        """
-        if user_id not in self._insight_cache:
-            self._insight_cache[user_id] = {}
+        # Get last week's data for comparison
+        last_week_moods = self.db.query(MoodLog).filter(
+            and_(
+                MoodLog.user_id == user_id,
+                MoodLog.created_at >= two_weeks_ago,
+                MoodLog.created_at < one_week_ago
+            )
+        ).all()
         
-        cache = self._insight_cache[user_id]
-        now = datetime.now()
-        filtered = []
+        last_week_activities = self.db.query(ActivityCompletion).filter(
+            and_(
+                ActivityCompletion.user_id == user_id,
+                ActivityCompletion.completed_at >= two_weeks_ago,
+                ActivityCompletion.completed_at < one_week_ago
+            )
+        ).all()
         
-        for insight in insights:
-            last_shown = cache.get(insight.insight_type)
-            
-            if last_shown:
-                time_since = now - last_shown
-                if time_since < timedelta(hours=24):
-                    logger.debug(f"Rate limiting: {insight.insight_type} shown {time_since.seconds/3600:.1f}h ago")
-                    continue
-            
-            filtered.append(insight)
+        # Calculate metrics
+        mood_summary = self._calculate_mood_summary(this_week_moods)
+        activity_summary = self._calculate_activity_summary(this_week_activities)
+        comparison = self._compare_weeks(this_week_moods, last_week_moods, 
+                                        this_week_activities, last_week_activities)
         
-        return filtered
-    
-    def _filter_by_context(self, insights: List[InsightObject], current_context: str) -> List[InsightObject]:
-        """Filter insights by relevance to current context"""
-        # Map contexts
-        context_map = {
-            'stressed': 'stress',
-            'tired': 'activity',
-            'bored': 'engagement'
+        # Get patterns
+        patterns = self.pattern_detector.get_actionable_insights(user_id)
+        
+        # Get top activities
+        top_activities = self._get_top_activities(user_id)
+        
+        return {
+            'period': 'This Week',
+            'mood_summary': mood_summary,
+            'activity_summary': activity_summary,
+            'comparison': comparison,
+            'patterns': patterns[:3],  # Top 3 patterns
+            'top_activities': top_activities[:3],  # Top 3 activities
+            'recommendations': self._generate_recommendations(patterns, mood_summary)
         }
-        
-        target_context = context_map.get(current_context, current_context)
-        
-        # Prioritize matching context, but don't exclude others
-        matching = [i for i in insights if i.context == target_context]
-        others = [i for i in insights if i.context != target_context]
-        
-        return matching + others
     
-    def mark_insight_shown(self, user_id: int, insight_type: str):
-        """Mark insight as shown (for rate limiting)"""
-        if user_id not in self._insight_cache:
-            self._insight_cache[user_id] = {}
+    def _calculate_mood_summary(self, mood_logs: List) -> Dict:
+        """Calculate mood statistics"""
+        if not mood_logs:
+            return {
+                'total_logs': 0,
+                'avg_intensity': 0,
+                'most_common_mood': None,
+                'most_common_reason': None
+            }
         
-        self._insight_cache[user_id][insight_type] = datetime.now()
-        logger.info(f"Marked insight '{insight_type}' as shown for user {user_id}")
-
-
-# Global instance
-_insight_generator = None
-
-def get_insight_generator() -> InsightGenerator:
-    """Get or create global InsightGenerator instance"""
-    global _insight_generator
-    if _insight_generator is None:
-        _insight_generator = InsightGenerator()
-    return _insight_generator
+        # Count moods
+        mood_counts = {}
+        reasons = []
+        intensities = []
+        
+        for log in mood_logs:
+            mood_counts[log.mood_emoji] = mood_counts.get(log.mood_emoji, 0) + 1
+            if log.reason:
+                reasons.append(log.reason)
+            if log.intensity:
+                intensities.append(log.intensity)
+        
+        most_common_mood = max(mood_counts.items(), key=lambda x: x[1])[0] if mood_counts else None
+        most_common_reason = max(set(reasons), key=reasons.count) if reasons else None
+        avg_intensity = sum(intensities) / len(intensities) if intensities else 5
+        
+        return {
+            'total_logs': len(mood_logs),
+            'avg_intensity': round(avg_intensity, 1),
+            'most_common_mood': most_common_mood,
+            'most_common_reason': most_common_reason,
+            'mood_distribution': mood_counts
+        }
+    
+    def _calculate_activity_summary(self, activities: List) -> Dict:
+        """Calculate activity statistics"""
+        if not activities:
+            return {
+                'total_completions': 0,
+                'unique_activities': 0,
+                'most_completed': None
+            }
+        
+        activity_counts = {}
+        for activity in activities:
+            activity_counts[activity.activity_id] = activity_counts.get(activity.activity_id, 0) + 1
+        
+        most_completed = max(activity_counts.items(), key=lambda x: x[1])[0] if activity_counts else None
+        
+        return {
+            'total_completions': len(activities),
+            'unique_activities': len(activity_counts),
+            'most_completed': most_completed,
+            'activity_distribution': activity_counts
+        }
+    
+    def _compare_weeks(self, this_week_moods, last_week_moods, 
+                      this_week_activities, last_week_activities) -> Dict:
+        """Compare this week to last week"""
+        mood_change = len(this_week_moods) - len(last_week_moods)
+        activity_change = len(this_week_activities) - len(last_week_activities)
+        
+        # Calculate average intensity change
+        this_week_intensity = sum(m.intensity or 5 for m in this_week_moods) / len(this_week_moods) if this_week_moods else 5
+        last_week_intensity = sum(m.intensity or 5 for m in last_week_moods) / len(last_week_moods) if last_week_moods else 5
+        intensity_change = this_week_intensity - last_week_intensity
+        
+        return {
+            'mood_logs_change': mood_change,
+            'activity_completions_change': activity_change,
+            'intensity_change': round(intensity_change, 1),
+            'trend': 'improving' if intensity_change < 0 else 'stable' if abs(intensity_change) < 1 else 'declining'
+        }
+    
+    def _get_top_activities(self, user_id: int) -> List[Dict]:
+        """Get top performing activities based on feedback"""
+        four_weeks_ago = datetime.utcnow() - timedelta(days=28)
+        
+        feedback_records = self.db.query(ActivityFeedback).filter(
+            and_(
+                ActivityFeedback.user_id == user_id,
+                ActivityFeedback.created_at >= four_weeks_ago
+            )
+        ).all()
+        
+        # Calculate success rates
+        activity_stats = {}
+        
+        for feedback in feedback_records:
+            activity_id = feedback.activity_id
+            if activity_id not in activity_stats:
+                activity_stats[activity_id] = {'helpful': 0, 'total': 0}
+            
+            activity_stats[activity_id]['total'] += 1
+            if feedback.helpful:
+                activity_stats[activity_id]['helpful'] += 1
+        
+        # Calculate success rates and sort
+        top_activities = []
+        for activity_id, stats in activity_stats.items():
+            if stats['total'] >= 2:  # At least 2 tries
+                success_rate = stats['helpful'] / stats['total']
+                top_activities.append({
+                    'activity': activity_id,
+                    'success_rate': success_rate,
+                    'total_tries': stats['total'],
+                    'helpful_count': stats['helpful']
+                })
+        
+        # Sort by success rate, then by total tries
+        top_activities.sort(key=lambda x: (x['success_rate'], x['total_tries']), reverse=True)
+        
+        return top_activities
+    
+    def _generate_recommendations(self, patterns: List[Dict], mood_summary: Dict) -> List[str]:
+        """Generate actionable recommendations"""
+        recommendations = []
+        
+        # Pattern-based recommendations
+        for pattern in patterns[:2]:  # Top 2 patterns
+            recommendations.append(pattern['suggestion'])
+        
+        # Mood-based recommendations
+        if mood_summary['most_common_reason']:
+            reason = mood_summary['most_common_reason']
+            recommendations.append(f"Focus on activities that help with {reason}")
+        
+        # Consistency recommendation
+        if mood_summary['total_logs'] < 5:
+            recommendations.append("Try logging your mood daily to track patterns better")
+        
+        return recommendations[:3]  # Max 3 recommendations
+    
+    def format_insight_message(self, insight: Dict) -> str:
+        """Format insight as a friendly message"""
+        lines = []
+        
+        lines.append(f"📊 {insight['period']} Summary:")
+        lines.append("")
+        
+        # Mood summary
+        mood = insight['mood_summary']
+        if mood['total_logs'] > 0:
+            lines.append(f"🎭 Mood Tracking:")
+            lines.append(f"  • Logged {mood['total_logs']} times")
+            if mood['most_common_mood']:
+                lines.append(f"  • Most common: {mood['most_common_mood']}")
+            if mood['most_common_reason']:
+                lines.append(f"  • Main reason: {mood['most_common_reason']}")
+        
+        lines.append("")
+        
+        # Activity summary
+        activity = insight['activity_summary']
+        if activity['total_completions'] > 0:
+            lines.append(f"💪 Activities:")
+            lines.append(f"  • Completed {activity['total_completions']} activities")
+            if activity['most_completed']:
+                lines.append(f"  • Favorite: {activity['most_completed']}")
+        
+        lines.append("")
+        
+        # Comparison
+        comp = insight['comparison']
+        if comp['mood_logs_change'] != 0:
+            change = "up" if comp['mood_logs_change'] > 0 else "down"
+            lines.append(f"📈 Compared to last week:")
+            lines.append(f"  • Mood logs: {change} by {abs(comp['mood_logs_change'])}")
+            lines.append(f"  • Trend: {comp['trend']}")
+            lines.append("")
+        
+        # Top activities
+        if insight['top_activities']:
+            lines.append("🌟 What's Working:")
+            for i, activity in enumerate(insight['top_activities'][:2], 1):
+                rate = int(activity['success_rate'] * 100)
+                lines.append(f"  {i}. {activity['activity']} ({rate}% success rate)")
+            lines.append("")
+        
+        # Patterns
+        if insight['patterns']:
+            lines.append("🔍 Insights I Noticed:")
+            for i, pattern in enumerate(insight['patterns'], 1):
+                lines.append(f"  {i}. {pattern['insight']}")
+            lines.append("")
+        
+        # Recommendations
+        if insight['recommendations']:
+            lines.append("💡 Recommendations:")
+            for i, rec in enumerate(insight['recommendations'], 1):
+                lines.append(f"  {i}. {rec}")
+        
+        return "\n".join(lines)

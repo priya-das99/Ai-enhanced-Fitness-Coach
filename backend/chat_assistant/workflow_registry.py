@@ -25,12 +25,21 @@ class WorkflowRegistry:
     
     def _auto_register_workflows(self):
         """Auto-register all available workflows"""
+        # Re-enabled: ActivityWorkflow handles water, sleep, weight, meal logging
         try:
             from .activity_workflow import ActivityWorkflow
             self.register(ActivityWorkflow())
             logger.info("Auto-registered ActivityWorkflow")
         except Exception as e:
             logger.warning(f"Could not register ActivityWorkflow: {e}")
+        
+        # New: ActivityLoggingWorkflowWrapper handles exercise logging with categories
+        try:
+            from .activity_logging_workflow_wrapper import ActivityLoggingWorkflowWrapper
+            self.register(ActivityLoggingWorkflowWrapper())
+            logger.info("Auto-registered ActivityLoggingWorkflowWrapper")
+        except Exception as e:
+            logger.warning(f"Could not register ActivityLoggingWorkflowWrapper: {e}")
         
         try:
             from .mood_workflow import MoodWorkflow

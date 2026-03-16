@@ -45,7 +45,7 @@ class MoodWorkflow(BaseWorkflow):
     def __init__(self):
         super().__init__(
             workflow_name="mood_logging",
-            handled_intents=['mood_logging', 'mood_check', 'feeling', 'emotion']
+            handled_intents=['mood_logging', 'mood_check', 'feeling', 'emotion', 'log_mood']
         )
     
     def start(self, message: str, state: WorkflowState, user_id: int) -> WorkflowResponse:
@@ -84,7 +84,7 @@ class MoodWorkflow(BaseWorkflow):
                     logger.warning(f"Failed to publish mood_logged event: {e}")
                 
                 state.complete_workflow()
-                return self._create_positive_mood_response(mood_emoji)
+                return self._create_positive_mood_response(mood_emoji, user_id=user_id)
             else:
                 # Negative mood - ask for reason
                 reasons = get_mood_reasons()
@@ -118,7 +118,7 @@ class MoodWorkflow(BaseWorkflow):
             # Start workflow first, then update data
             state.start_workflow(self.workflow_name, {'step': 'asking_mood'})
             return WorkflowResponse(
-                message="You've already logged your mood today! 😊\n\nWant to log it again anyway? Select a mood below:",
+                message="You already logged your mood today! Want to log it again anyway?",
                 completed=False,  # Keep workflow active to handle emoji selection
                 next_state=ConversationState.WORKFLOW_ACTIVE,
                 ui_elements=['emoji_selector'],
@@ -266,7 +266,7 @@ class MoodWorkflow(BaseWorkflow):
                     logger.warning(f"Failed to publish mood_logged event: {e}")
                 
                 state.complete_workflow()
-                return self._create_positive_mood_response(mood_emoji)
+                return self._create_positive_mood_response(mood_emoji, user_id=user_id)
             else:
                 # Negative mood - ask for reason
                 reasons = get_mood_reasons()
@@ -367,7 +367,7 @@ class MoodWorkflow(BaseWorkflow):
                 
                 # Don't update state, just complete
                 state.complete_workflow()
-                return self._create_positive_mood_response(mood_emoji)
+                return self._create_positive_mood_response(mood_emoji, user_id=user_id)
             else:
                 # Negative mood - check if we already have a reason
                 if extracted_reason:
@@ -609,7 +609,7 @@ class MoodWorkflow(BaseWorkflow):
             except Exception as e:
                 logger.warning(f"Failed to publish mood_logged event: {e}")
             
-            return self._create_positive_mood_response(mood_emoji)
+            return self._create_positive_mood_response(mood_emoji, user_id=user_id)
         else:
             # Negative mood - ask for reason
             reasons = get_mood_reasons()
@@ -1147,14 +1147,29 @@ class MoodWorkflow(BaseWorkflow):
         }
         return mood_names.get(mood_emoji, 'Good')
     
-    def _create_positive_mood_response(self, mood_emoji: str) -> WorkflowResponse:
-        """Create response for positive mood - NO buttons (mood already logged)"""
+    def _create_positive_mood_response(self, mood_emoji: str, user_id: int = None, reason: str = None) -> WorkflowResponse:
+        """Create response for positive mood with proactive features"""
+        from chat_assistant.proactive_helpers import add_proactive_mood_response
+        
+        # If user_id provided, use proactive response
+        if user_id:
+            proactive_response = add_proactive_mood_response(user_id, mood_emoji, reason)
+            
+            return WorkflowResponse(
+                message=proactive_response['message'],
+                completed=True,
+                next_state=ConversationState.IDLE,
+                ui_elements=[],
+                extra_data=proactive_response.get('metadata', {})
+            )
+        
+        # Fallback to simple response
         mood_name = self._get_mood_name(mood_emoji)
         return WorkflowResponse(
             message=f"✓ Logged: {mood_name} mood {mood_emoji}\n\nThat's wonderful! Keep that positive energy going! 🎉",
             completed=True,
             next_state=ConversationState.IDLE,
-            ui_elements=[],  # NO buttons - mood already logged
+            ui_elements=[],
             extra_data={}
         )
     

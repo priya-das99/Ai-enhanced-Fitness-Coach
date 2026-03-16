@@ -45,6 +45,21 @@ class UniversalContextHandler:
         # Quick keyword check first (fast path)
         message_lower = message.lower().strip()
         
+        # CRITICAL FIX: Don't intercept activity summary queries
+        # These should go to activity_summary workflow, not be treated as follow-ups
+        summary_patterns = [
+            'what have i logged', 'what did i track', 'what did i log', 'show me what',
+            'what activities did i', 'what have i been', 'what am i missing',
+            'what haven\'t i logged', 'what should i still log', 'what\'s not logged',
+            'did i log', 'have i logged', 'did i track', 'have i tracked',
+            'show my logging', 'show my activity', 'logging history', 'activity history',
+            'remind me what to log', 'what should i log now', 'what do i need to track'
+        ]
+        
+        if any(pattern in message_lower for pattern in summary_patterns):
+            logger.info(f"Detected activity summary query - NOT treating as follow-up: '{message_lower[:50]}'")
+            return False
+        
         for pattern_type, patterns in self.follow_up_patterns.items():
             if any(pattern in message_lower for pattern in patterns):
                 logger.info(f"Detected follow-up pattern '{pattern_type}' with focus '{current_focus}' (keyword match)")

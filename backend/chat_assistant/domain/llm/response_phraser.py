@@ -23,67 +23,70 @@ class ResponsePhraser:
     def __init__(self):
         self.llm_service = get_llm_service()
     
-    def phrase_general_response(self, user_message: str, conversation_context: str = None) -> str:
+    def phrase_general_response(self, user_message: str, conversation_context: str = None, user_context: dict = None) -> str:
         """
         Generate a general conversational response with context awareness.
         
         Args:
             user_message: User's current message
             conversation_context: Recent conversation history
+            user_context: User's recent activities and fitness data
             
         Returns:
             Natural language response (max 3 sentences)
         """
         try:
-            # Build prompt with conversation context if available
+            # Build user context section
             context_section = ""
             if conversation_context:
                 context_section = f"\nRecent conversation:\n{conversation_context}\n"
             
+            # Add user fitness context
+            user_info = ""
+            if user_context:
+                recent_activities = user_context.get('recent_activities', [])
+                if recent_activities:
+                    activities_str = ", ".join([a.get('activity_type', 'activity') for a in recent_activities[:3]])
+                    user_info = f"\nUser's recent activities: {activities_str}"
+            
             prompt = f"""
-You are MoodCapture, a calm and supportive wellness assistant inside a mood and activity tracking app.
+You're a friendly fitness coach and wellness buddy who talks like a real friend.
 
 Your personality:
-- Warm but grounded
-- Friendly but not childish
-- Encouraging but not preachy
-- Calm and reassuring
-- ACTION-ORIENTED: Help users DO things, not just talk about them
+- Supportive and encouraging, never judgmental
+- Knowledgeable about fitness, exercise, nutrition, and wellness
+- Conversational and warm, not robotic or formal
+- Proactive - suggest workouts, give tips, share advice
+- Remember context - reference what the user mentioned before
 
-{context_section}
+Your main jobs:
+1. Answer fitness questions (exercises, workouts, nutrition, recovery)
+2. Provide workout suggestions based on user's situation
+3. Give exercise form tips and guidance
+4. Offer motivation and celebrate progress
+5. Help track activities naturally through conversation
+6. Understand when users mention activities and acknowledge them
+{context_section}{user_info}
 
 User message:
 "{user_message}"
 
-Write a brief response (1–2 sentences, max 3).
+Respond naturally as a fitness coach friend (2-3 sentences). Be specific and helpful.
 
-Rules:
-- If user wants to DO an activity (meditation, breathing, journaling, etc.), acknowledge and encourage them to start NOW. Don't give educational advice.
-- If they express emotion, validate gently without exaggerating.
-- Do NOT give medical advice or educational content about wellness activities.
-- Do NOT sound like a therapist.
-- Avoid clichés and generic wellness advice like "it can be calming" or "it helps you reflect".
-- Avoid repeating common phrases like "How are you feeling today?" unless necessary.
-- Keep language simple and human.
-- Use at most ONE emoji if it fits naturally.
-- If off-topic, lightly redirect to mood or activity tracking.
-
-IMPORTANT EXAMPLES:
-- "I want to meditate" → "Great! Let's get you started with meditation. 🧘" (NOT "meditation can be calming...")
-- "I want to meditation" → "Perfect! Ready to start meditating?" (NOT "it can be really calming...")
-- "I want to journal" → "Awesome! Journaling is a great choice." (NOT "journaling helps you reflect...")
-- "I'm stressed" → "I hear you. What's making you feel stressed?" (emotion validation, ask follow-up)
-
-Be action-oriented and direct, not educational or advisory.
+Examples:
+- If they mention an activity: "Nice work on that run! How far did you go? Make sure to stretch after."
+- If they ask about exercise: "Pushups are great for chest! Keep your core tight and elbows at 45 degrees."
+- If they're tired: "Rest is important too! Maybe try some light stretching or take a recovery day."
+- If they ask what to do: "What's your goal today? Cardio, strength, or something chill?"
 
 Response:
 """
             
             text = self.llm_service.call(
                 prompt=prompt,
-                system_message="You are MoodCapture, a calm and supportive wellness assistant. Keep responses brief, natural, and grounded. No medical advice. At most one emoji. Be action-oriented, not educational.",
-                temperature=0.6,  # Higher temperature for more variety
-                max_tokens=60
+                system_message="You're a knowledgeable fitness coach who talks like a friend. Be specific, helpful, and encouraging.",
+                temperature=0.7,
+                max_tokens=100
             )
             
             # Ensure max 3 sentences
@@ -149,7 +152,14 @@ Response:
     
     def _fallback_general_response(self) -> str:
         """Fallback general response"""
-        return "I'm here to help with mood and activity tracking! 😊 You can tell me how you're feeling, or log activities like water, sleep, or exercise."
+        import random
+        responses = [
+            "Hey! I'm your fitness buddy. What's your goal today?",
+            "Hi there! Want to work out, track an activity, or just chat about fitness?",
+            "What's up? I can help with workouts, exercises, or tracking your activities.",
+            "Hey! How's your fitness journey going? I'm here to help!"
+        ]
+        return random.choice(responses)
     
     def _build_contextual_messages(self, user_message: str, state) -> list:
         """
@@ -211,12 +221,16 @@ Response:
     
     def _fallback_acknowledgment(self, context: str) -> str:
         """Fallback acknowledgment"""
+        import random
         if 'mood' in context.lower():
-            return "Your mood has been logged."
+            responses = ["Got it!", "Logged!", "Thanks for sharing", "Noted!"]
+            return random.choice(responses)
         elif 'activity' in context.lower():
-            return "Activity logged successfully."
+            responses = ["Nice!", "Logged!", "Got it!", "Awesome!"]
+            return random.choice(responses)
         else:
-            return "Got it! Thanks for sharing."
+            responses = ["Got it!", "Thanks!", "Cool!", "Noted!"]
+            return random.choice(responses)
 
 
 # Global instance
@@ -275,7 +289,7 @@ def phrase_activity_suggestion(
     # LLM prompt (minimal, focused)
     prompt = f"""User is feeling {state}. 
 Suggest trying one or two of these activities: {', '.join(top_activities)}.
-Tone: {tone}
+Tone: {tone} 
 Length: Max 2 sentences
 Style: Natural, conversational
 Must mention at least one activity by name
@@ -440,23 +454,19 @@ def phrase_empathetic_response(
         Warm, supportive response
         
     Example:
-        "I hear you. Take it easy today and rest when you can. 💙"
+        "That sounds rough. Take it easy today 💙"
     """
-    prompt = f"""You are MoodCapture, a supportive wellness assistant.
+    prompt = f"""You're a supportive friend responding to someone who said: "{user_message}"
 
-User said: "{user_message}"
-
-Generate a brief, caring response (1-2 sentences) that:
-1. Acknowledges their feeling
-2. Offers gentle support
-3. Encourages self-care
+Respond naturally and warmly (1-2 sentences) like you're texting a friend:
 
 Examples:
-- "I hear you. Take it easy today and rest when you can. 💙"
-- "That's tough. Remember to be kind to yourself. 💙"
-- "I understand. Make sure to take breaks and stay hydrated. 💧"
+- "That sounds rough. Take it easy today 💙"
+- "Ugh, I feel you. Be kind to yourself 💙"  
+- "That's tough. Make sure you rest when you can 💙"
+- "I hear you. Take some time for yourself 💙"
 
-Keep it warm and supportive. Use ONE emoji.
+Keep it natural and supportive. Use ONE emoji.
 
 Response:"""
     
@@ -464,7 +474,7 @@ Response:"""
         llm = get_llm_service()
         response = llm.call(
             prompt=prompt,
-            system_message="You are a supportive wellness assistant.",
+            system_message="You're a supportive friend. Be natural and warm.",
             temperature=0.7,
             max_tokens=50
         )
@@ -474,4 +484,4 @@ Response:"""
         
     except Exception as e:
         logger.error(f"❌ Empathetic phrasing failed: {e}")
-        return "Your mood has been logged. Take care of yourself! 💙"
+        return "That sounds tough. Take care of yourself! 💙"

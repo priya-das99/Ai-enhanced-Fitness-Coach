@@ -1,723 +1,891 @@
-# chat_engine_workflow.py
-# Phase 1 Refactoring: LLM-based intent routing
-# Workflows are now pure handlers, intent detection is centralized
+import logging
 
-from .workflow_registry import WorkflowRegistry
+from .workflow_registry import get_registry
 from .llm_service import get_llm_service
 from .response_validator import validate_response
-import logging
-import sys
-import os
-
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 logger = logging.getLogger(__name__)
 
+# Maps raw button/shorthand names → canonical log_ format
+ACTIVITY_BUTTON_MAP = {
+    "water": "log_water",
+    "water_intake": "log_water",
+    "drink_water": "log_water",
+    "mood": "log_mood",
+    "sleep": "log_sleep",
+    "rest": "log_sleep",
+    "sleep_log": "log_sleep",
+    "exercise": "log_exercise",
+    "workout": "log_exercise",
+    "weight": "log_weight",
+    "steps": "log_steps",
+    "calories": "log_calories",
+    "meal": "log_meal",
+}
+
+# Mood keywords used to detect mood expressions in free text
+MOOD_KEYWORDS = [
+    "stressed", "anxious", "worried", "nervous", "overwhelmed",
+    "happy", "sad", "angry", "frustrated", "upset", "down",
+    "excited", "tired", "exhausted", "energetic", "calm",
+    "depressed", "joyful", "content", "lonely", "scared",
+    "afraid", "confident", "proud", "ashamed", "guilty",
+    "relieved", "hopeful", "hopeless", "bored", "motivated",
+    "unmotivated", "inspired", "discouraged", "peaceful",
+    "restless", "comfortable", "uncomfortable",
+]
+
+MOOD_PHRASES = [
+    "i feel", "i'm feeling", "i am", "i'm",
+    "feeling", "not feeling", "been feeling",
+]
+
+# Phrases that indicate "log mood again" even mid-conversation
+LOG_AGAIN_PHRASES = [
+    "log again", "log my mood again", "log mood again",
+    "log it again", "track again", "log another mood",
+    "want to log again", "want to log my mood",
+]
+
+# These words in a "log again" message mean it's NOT about mood
+LOG_AGAIN_EXCLUSIONS = ["water", "exercise", "sleep", "weight", "meal", "workout"]
+
+
 class ChatEngineWorkflow:
     """
-    Main chat engine with LLM-based intent routing (Phase 1)
-    Event-driven architecture (Phase 2)
-    
-    Flow:
-    1. Check if there's an active workflow
-    2. If active, continue that workflow
-    3. If idle, use LLM to detect intent
-    4. Map intent → workflow
-    5. Execute workflow
-    6. Publish events (Phase 2)
+    Chat engine with a single, linear routing chain.
+
+    Routing order (first match wins):
+    1.  Guardrails  – block unsafe messages immediately
+    2.  Button-click routing  – log_*, mapped shortcuts (PRIORITY - before context router)
+    3.  Context Router  – handles workflow switching / activity detection
+    4.  Universal Context Handler  – follow-ups to recent activity (idle only)
+    5.  Continue active workflow  – pass message straight to the running workflow
+    6.  "Log again" shortcut  – route to mood workflow
+    7.  Mood expression detection  – free-text mood → mood workflow
+    8.  External / activity-start buttons  – start_content_*, start_*
+    9.  Mood emoji direct logging
+    10. LLM intent detection  – general fallback
     """
-    
+
     def __init__(self):
-        from .workflow_registry import get_registry
-        self.registry = get_registry()  # Use global singleton registry
+        self.registry = get_registry()
         self.llm_service = get_llm_service()
-        self.enable_multi_intent = True  # Phase 3: Multi-intent support
-        self.enable_validation = True  # Phase 3: Response validation
-        self.enable_events = True  # Phase 2: Event publishing
-    
+        self.enable_multi_intent = True
+        self.enable_validation = True
+        self.enable_events = True
+        self.enable_intent_gate = True  # NEW: Two-stage intent classification
+
+    # ------------------------------------------------------------------ #
+    # PUBLIC ENTRY POINT
+    # ------------------------------------------------------------------ #
+
     def process_message(self, user_id: str, message: str) -> dict:
-        """
-        Main entry point for processing user messages.
-        
-        Phase 1: Uses LLM intent detection instead of can_handle()
-        Guardrails: Applied before any processing to ensure safety and scope
-        Context Router: Handles activity workflow switching before processing
-        
-        Returns:
-            dict with keys: message, ui_elements, completed, state
-        """
-        logger.info(f"[Phase 1] Processing message for user {user_id}: '{message}'")
-        
-        # ===== GUARDRAILS CHECK (FIRST PRIORITY) =====
-        from .guardrails import apply_guardrails
-        
-        is_allowed, response_override, metadata = apply_guardrails(message)
-        
-        if not is_allowed:
-            # Guardrail triggered - return response immediately without LLM call
-            logger.warning(
-                f"Guardrail triggered for user {user_id} | "
-                f"Type: {metadata.get('violation_type')} | "
-                f"Message: {message[:50]}..."
-            )
-            
-            return {
-                'message': response_override,
-                'ui_elements': [],
-                'state': 'idle',
-                'completed': True,
-                'guardrail_triggered': True,
-                'violation_type': metadata.get('violation_type')
-            }
-        
-        # Message passed guardrails - continue with normal processing
-        logger.info(f"[Guardrails] Message passed all checks")
-        
-        # Use WorkflowState directly (it's already a singleton per user)
-        from .unified_state import get_workflow_state
-        workflow_state = get_workflow_state(int(user_id))
-        
-        logger.info(f"Current state: {workflow_state.state.value}, Active workflow: {workflow_state.active_workflow}")
-        
-        # ===== CONTEXT ROUTER CHECK (NEW - BEFORE WORKFLOW PROCESSING) =====
-        from .context_router import ContextRouter
-        context_router = ContextRouter()
-        
-        # Route message through context router first
-        routed_response = context_router.route_message(message, workflow_state, int(user_id))
-        
-        if routed_response:
-            # Context router handled the message (workflow switch or activity detection)
-            logger.info(f"[Context Router] Message routed successfully")
-            
-            # Update activity time for timeout tracking
-            workflow_state.update_activity_time()
-            
-            # Store messages in conversation history
-            workflow_state.add_message('user', message)
-            workflow_state.add_message('assistant', routed_response.message)
-            
-            # Convert to dict format
-            result = self._convert_response(routed_response, workflow_state, 'context_router', user_id)
-            return result
-        
-        # ===== UNIVERSAL CONTEXT CHECK =====
-        # Check if this is a follow-up to recent activity using session summary
-        if workflow_state.is_idle():  # Only check if no active workflow
-            from .universal_context_handler import get_universal_context_handler
-            context_handler = get_universal_context_handler()
-            
-            if context_handler.can_handle_followup(message, workflow_state):
-                logger.info(f"[Universal Context] Handling follow-up request: '{message}'")
-                followup_response = context_handler.handle_followup(message, workflow_state, user_id)
-                
-                if followup_response:
-                    # Store messages in conversation history
-                    workflow_state.add_message('user', message)
-                    workflow_state.add_message('assistant', followup_response.message)
-                    
-                    # Convert to dict format
-                    result = self._convert_response(followup_response, workflow_state, 'universal_context', user_id)
-                    return result
-        
-        # Load conversation history from database if in-memory is empty (after restart/login)
-        if len(workflow_state.conversation_history) == 0:
-            try:
-                from app.repositories.chat_repository import ChatRepository
-                chat_repo = ChatRepository()
-                
-                # Load last 10 messages from database for context continuity
-                db_messages = chat_repo.get_recent_messages(user_id, limit=10)
-                
-                if db_messages:
-                    # Populate in-memory conversation_history
-                    for msg in db_messages:
-                        role = 'user' if msg['sender'] == 'user' else 'assistant'
-                        workflow_state.conversation_history.append({
-                            'role': role,
-                            'content': msg['message']
-                        })
-                    
-                    logger.info(f"✓ Loaded {len(db_messages)} messages from database for context continuity")
-            except Exception as e:
-                logger.warning(f"Failed to load conversation history from database: {e}")
-        
-        # Store user message in conversation history
-        workflow_state.add_message('user', message)
-        
-        # Map common activity button names to log_ format
-        ACTIVITY_BUTTON_MAP = {
-            'water': 'log_water',
-            'mood':'log_mood',
-            'water_intake': 'log_water',
-            'drink_water': 'log_water',
-            'sleep': 'log_sleep',
-            'rest': 'log_sleep',
-            'sleep_log': 'log_sleep',
-            'exercise': 'log_exercise',
-            'workout': 'log_exercise',
-            'weight': 'log_weight',
-        }
-        
-        # Check for "log MOOD again" requests - these should go to mood workflow
-        # Be specific to avoid catching "I want to log water" etc.
-        message_lower_original = message.lower().strip()
-        is_log_again_request = any(phrase in message_lower_original for phrase in [
-            'log again', 'log my mood again', 'log mood again',
-            'log it again', 'track again', 'log another mood',
-            'want to log again', 'want to log my mood'
-        ]) and not any(activity in message_lower_original for activity in [
-            'water', 'exercise', 'sleep', 'weight', 'meal', 'workout'
-        ])
-        
-        # If user wants to log again, route to mood workflow
-        if is_log_again_request:
-            logger.info(f"[Priority] Detected 'log again' request - routing to mood workflow")
-            mood_workflow = self.registry.get_workflow_for_intent('mood_logging')
-            if mood_workflow:
-                response = mood_workflow.start(message, workflow_state, user_id)
-                workflow_state.add_message('assistant', response.message)
-                result = self._convert_response(response, workflow_state, 'mood_logging', user_id)
-                return result
-        
-        # Check if this is a button click that should start a new workflow
-        message_lower = message.lower().strip().replace(' ', '_')
-        is_button_click = message_lower.startswith('log_')
-        is_external_content_button = message_lower.startswith('start_content_')
-        is_activity_start_button = message_lower.startswith('start_') and not is_external_content_button
-        
-        # Check for exact "I want to log X" patterns (more precise)
-        if not is_button_click and message_lower in ['i_want_to_log_water', 'i_want_to_log_sleep', 'i_want_to_log_exercise', 'i_want_to_log_weight', 'i_want_to_log_mood']:
-            is_button_click = True
-            # Extract the actual button ID (e.g., "i_want_to_log_mood" -> "log_mood")
-            message_lower = message_lower.replace('i_want_to_', '')
-        
-        # DEBUG: Log what we're receiving
-        logger.info(f"[DEBUG] Received message: '{message}'")
-        logger.info(f"[DEBUG] Normalized: '{message_lower}'")
-        logger.info(f"[DEBUG] Is button click: {is_button_click}")
-        logger.info(f"[DEBUG] Is external content: {is_external_content_button}")
-        logger.info(f"[DEBUG] Is activity start: {is_activity_start_button}")
-        
-        # Also check if it's an activity button that needs mapping
-        if not is_button_click and message_lower in ACTIVITY_BUTTON_MAP:
-            is_button_click = True
-            original_message = message
-            message = ACTIVITY_BUTTON_MAP[message_lower]  # Normalize to log_ format
-            logger.info(f"Mapped activity button '{original_message}' to '{message}'")
-        
-        # PRIORITY CHECK: Detect mood expressions even if there's an active workflow
-        # This allows users to express their mood at any time
-        is_mood_expression = self._is_mood_expression(message)
-        
-        if is_mood_expression and not is_button_click:
-            logger.info(f"[Priority] Detected mood expression: '{message}' - switching to mood workflow")
-            # Reset any active workflow and start mood workflow
-            workflow_state.complete_workflow()
-            mood_workflow = self.registry.get_workflow_for_intent('mood_logging')
-            if mood_workflow:
-                response = mood_workflow.start(message, workflow_state, user_id)
-                workflow_state.add_message('assistant', response.message)
-                result = self._convert_response(response, workflow_state, 'mood_logging', user_id)
-                return result
-        
-        # PRIORITY CHECK: External content/activity buttons should always go to activity workflow
-        # Even if there's an active mood workflow showing suggestions
-        if is_external_content_button or is_activity_start_button:
-            logger.info(f"[Priority] Detected external/activity button: '{message}' - routing to activity workflow")
-            
-            # IMPORTANT: Don't complete workflow yet - preserve context for proper handling
-            # The activity workflow will handle the external activity and maintain context
-            
-            # Route to activity workflow
-            activity_workflow = self.registry.get_workflow_for_intent('activity_logging')
-            if activity_workflow:
-                response = activity_workflow.start(message, workflow_state, user_id)
-                workflow_state.add_message('assistant', response.message)
-                result = self._convert_response(response, workflow_state, 'activity_logging', user_id)
-                return result
-        
-        # CRITICAL FIX: If there's an active workflow, ALWAYS send message to it first
-        # Let the workflow decide if it can handle the message (including button clicks)
-        if workflow_state.active_workflow and not workflow_state.is_idle():
-            workflow = self.registry.get_workflow(workflow_state.active_workflow)
-            if workflow:
-                logger.info(f"Continuing active workflow: {workflow_state.active_workflow}")
-                response = workflow.process(message, workflow_state, user_id)
-                
-                # Store bot response in conversation history
-                workflow_state.add_message('assistant', response.message)
-                
-                # Convert WorkflowResponse to dict
-                result = self._convert_response(response, workflow_state, workflow.workflow_name, user_id)
-                return result
-        
-        # Handle button clicks directly without LLM
-        if is_button_click or is_external_content_button or is_activity_start_button:
-            logger.info(f"[Phase 1] Button click detected: {message}")
-            
-            # External content buttons (start_content_X) should go to activity workflow
-            if is_external_content_button or is_activity_start_button:
-                logger.info(f"[Phase 1] Routing external/activity button to activity workflow: {message_lower}")
-                activity_workflow = self.registry.get_workflow_for_intent('activity_logging')
-                if activity_workflow:
-                    # Pass the original message so activity workflow can track it
-                    response = activity_workflow.start(message, workflow_state, user_id)
-                    workflow_state.add_message('assistant', response.message)
-                    result = self._convert_response(response, workflow_state, 'activity_logging', user_id)
-                    return result
-            
-            # Use the normalized message_lower for routing
-            # Special handling for log_mood button
-            if message_lower == 'log_mood':
-                logger.info(f"[Phase 1] Routing log_mood to mood workflow")
-                mood_workflow = self.registry.get_workflow_for_intent('mood_logging')
-                if mood_workflow:
-                    # Pass the normalized button ID so mood workflow knows it's a button click
-                    response = mood_workflow.start('Log Mood', workflow_state, user_id)
-                    workflow_state.add_message('assistant', response.message)
-                    result = self._convert_response(response, workflow_state, 'mood_logging', user_id)
-                    return result
-            
-            # Route other log_* buttons to activity workflow (log_water, log_sleep, etc.)
-            activity_workflow = self.registry.get_workflow_for_intent('activity_logging')
-            if activity_workflow:
-                # Pass the normalized message for proper activity detection
-                response = activity_workflow.start(message_lower, workflow_state, user_id)
-                
-                # Store bot response in conversation history
-                workflow_state.add_message('assistant', response.message)
-                
-                result = self._convert_response(response, workflow_state, 'activity_logging', user_id)
-                return result
-        
-        # Check if message is a mood emoji (direct mood logging)
-        from .mood_handler import validate_mood_emoji
-        if validate_mood_emoji(message.strip()):
-            logger.info(f"[Phase 1] Detected mood emoji: {message}")
-            # Start mood workflow directly
-            mood_workflow = self.registry.get_workflow_for_intent('mood_logging')
-            if mood_workflow:
-                response = mood_workflow.start(message, workflow_state, user_id)
-                
-                # Store bot response in conversation history
-                workflow_state.add_message('assistant', response.message)
-                
-                result = self._convert_response(response, workflow_state, 'mood_logging', user_id)
-                return result
-        
-        # No active workflow - use LLM to detect intent
-        logger.info("[Phase 1] No active workflow - detecting intent via LLM")
-        
-        intent_result = self._detect_intent(message, workflow_state, user_id)
-        primary_intent = intent_result.get('primary_intent')
-        secondary_intent = intent_result.get('secondary_intent')
-        
-        logger.info(f"[Phase 1] Detected intent: primary={primary_intent}, secondary={secondary_intent}")
-        
-        # Get workflow for primary intent
-        selected_workflow = self.registry.get_workflow_for_intent(primary_intent)
-        
-        if not selected_workflow:
-            logger.warning(f"No workflow found for intent: {primary_intent}")
-            # Fallback to general chat
-            selected_workflow = self.registry.get_workflow_for_intent('general_chat')
-            
-            if not selected_workflow:
+        logger.info(f"[Engine] user={user_id} message='{message}'")
+
+        try:
+            # --- 1. GUARDRAILS ---
+            from .guardrails import apply_guardrails
+
+            allowed, response_override, metadata = apply_guardrails(message)
+
+            if not allowed:
+                logger.warning(
+                    f"[Guardrails] blocked user={user_id} "
+                    f"type={metadata.get('violation_type')}"
+                )
                 return {
-                    'message': "I'm here to help! You can log your mood or activities anytime.",
-                    'ui_elements': [],
-                    'completed': True,
-                    'state': 'idle'
+                    "message": response_override,
+                    "ui_elements": [],
+                    "state": "idle",
+                    "completed": True,
+                    "guardrail_triggered": True,
+                    "violation_type": metadata.get("violation_type"),
                 }
-        
-        logger.info(f"[Phase 1] Selected workflow: {selected_workflow.workflow_name}")
-        
-        # Store intent entities in workflow state for workflow to use
-        if 'entities' in intent_result:
-            workflow_state.set_workflow_data('intent_entities', intent_result['entities'])
-            logger.info(f"Stored intent entities: {intent_result['entities']}")
-        
-        # Check for multi-intent
-        if self.enable_multi_intent and secondary_intent and secondary_intent != 'none':
-            return self._handle_multi_intent_message(
-                message, workflow_state, user_id,
-                primary_intent, secondary_intent
+
+            from .unified_state import get_workflow_state
+
+            uid = int(user_id)
+            workflow_state = get_workflow_state(uid)
+
+            logger.info(
+                f"[Engine] state={workflow_state.state.value} "
+                f"active_workflow={workflow_state.active_workflow}"
             )
-        
-        # Single intent - execute workflow
-        response = selected_workflow.start(message, workflow_state, user_id)
-        
-        # Validate response
-        if self.enable_validation:
-            validate_response(response, selected_workflow.workflow_name, strict=False)
-        
-        # Convert to dict
-        result = self._convert_response(response, workflow_state, selected_workflow.workflow_name, user_id)
-        
-        return result
-    
-    def _detect_intent(self, message: str, workflow_state, user_id: str) -> dict:
-        """
-        Detect user intent using LLM with conversation context
-        
-        Returns:
-            {
-                'primary_intent': str,
-                'secondary_intent': str,
-                'confidence': float
+
+            # Load DB history on first message after restart
+            self._maybe_load_db_history(user_id, workflow_state)
+
+            # Store user turn
+            workflow_state.add_message("user", message)
+
+            return self._route(uid, message, workflow_state)
+
+        except Exception:
+            logger.exception(f"[Engine] Critical error for user={user_id}")
+            return {
+                "message": "I'm having trouble right now. Please try again.",
+                "ui_elements": [],
+                "state": "idle",
+                "completed": True,
+                "error_recovery": True,
             }
+
+    # ------------------------------------------------------------------ #
+    # INTENT GATE (Two-Stage Classification)
+    # ------------------------------------------------------------------ #
+
+    def _classify_intent_type(self, message: str) -> str:
         """
+        Stage 1: Classify if message is a command or conversation.
+        
+        This is the first gate that determines if the user wants to:
+        - command: Perform an action (log, track, start, show)
+        - conversation: Chat, ask questions, express feelings
+        
+        Returns: 'command' or 'conversation'
+        """
+        # Skip for buttons (always commands)
+        msg_lower = message.lower().strip()
+        if msg_lower.startswith("log_") or msg_lower.startswith("start_"):
+            return "command"
+        
+        # Quick keyword check for obvious commands (faster than LLM)
+        command_keywords = [
+            'log', 'track', 'record', 'want to log', 'want log',
+            'want to track', 'want track', 'i want to log', 'i want log',
+            'suggest', 'recommend', 'show me', 'give me', 'help me',
+            'what can i do', 'show my', 'view my',
+            # Activity summary queries (viewing logged data)
+            'what did i', 'how much did i', 'how many did i', 'did i',
+            'have i logged', 'my activities', 'what have i',
+            'how much water did', 'how many hours did', 'what was my',
+            'my intake', 'my log', 'am i on track', 'how close am i',
+            'did i reach', 'am i meeting', 'my progress', 'my status'
+        ]
+        
+        # Check for activity statements with quantities (should be logged)
+        activity_patterns = [
+            # Exercise patterns
+            r'i (played|did|went|ran|walked|exercised|worked out)',
+            r'i (swam|cycled|biked|jogged|lifted|stretched)',
+            r'played \w+ for \d+',
+            r'exercised for \d+',
+            r'worked out for \d+',
+            r'ran for \d+',
+            r'walked for \d+',
+            # Consumption patterns  
+            r'i (drank|ate|had|consumed) \d+',
+            r'drank \d+ (glasses|cups|bottles)',
+            r'ate \d+ (servings|meals|portions)',
+            r'had \d+ (glasses|cups|servings)',
+            # Sleep patterns
+            r'i slept (for )?\d+',
+            r'slept \d+ hours',
+            r'got \d+ hours',
+            # General activity with duration/quantity
+            r'for \d+ (minutes|hours|mins|hrs)',
+            r'\d+ (glasses|servings|hours|minutes|steps|calories)',
+        ]
+        
+        import re
+        for pattern in activity_patterns:
+            if re.search(pattern, msg_lower):
+                logger.info(f"[Intent Gate] Activity pattern match: '{pattern}' → command")
+                return "command"
+        
+        for keyword in command_keywords:
+            if keyword in msg_lower:
+                logger.info(f"[Intent Gate] Quick match: '{keyword}' → command")
+                return "command"
+        
+        # Use LLM for classification
+        try:
+            if not self.llm_service.is_available():
+                logger.warning("[Intent Gate] LLM unavailable, defaulting to conversation")
+                return "conversation"
+            
+            prompt = f"""Classify this user message as either 'command' or 'conversation'.
+
+User message: "{message}"
+
+COMMAND means the user wants to:
+1. Log/track something explicitly ("log mood", "track water", "log workout", "I want to log exercise", "I want log weight")
+2. Start an activity ("start challenge", "begin meditation")
+3. Request help/suggestions/recommendations ("what can I do?", "help me", "suggest something", "show me options")
+4. View data ("show my activities", "view my progress", "how much water did I drink", "did I reach my goal")
+5. Check status/progress ("am I on track", "how close am I", "did I exercise today", "what did I do today")
+6. Report activities with quantities/durations ("I played badminton for 30 minutes", "I drank 2 glasses of water", "I slept for 7 hours")
+
+CONVERSATION means the user is:
+1. Expressing feelings/emotions ("I am angry", "feeling stressed", "I'm tired")
+2. Asking informational questions ("is running good?", "how do I do pushups?")
+3. Greeting or chatting ("hi", "hello", "how are you?")
+4. Sharing information without quantities ("I just went for a run", "I had a bad day")
+
+CRITICAL EXAMPLES:
+- "I want to log exercise" = command (wants to log activity)
+- "I want log weight" = command (wants to log activity)
+- "I want to track my mood" = command (wants to log activity)
+- "log mood" = command (explicit logging)
+- "I played badminton for 30 minutes" = command (activity with duration - should be logged)
+- "I drank 2 glasses of water" = command (activity with quantity - should be logged)
+- "I slept for 7 hours" = command (activity with duration - should be logged)
+- "I exercised for 45 minutes" = command (activity with duration - should be logged)
+- "I ate 3 servings" = command (activity with quantity - should be logged)
+- "How much water did I drink today?" = command (viewing logged data)
+- "Did I reach my water goal?" = command (checking progress)
+- "What did I do today?" = command (viewing activities)
+- "Am I on track?" = command (checking status)
+- "I am angry" = conversation (expressing emotion)
+- "What can I do?" = command (requesting options/help)
+- "Is running good?" = conversation (asking question)
+- "I'm feeling stressed" = conversation (expressing feeling)
+- "I just went for a run" = conversation (sharing without quantity/duration)
+
+IMPORTANT: 
+- Any message with "log", "track", "record" + activity name = COMMAND
+- Any message with "I want to log/track/record" = COMMAND
+- Any message with "suggest", "recommend", "show me" = COMMAND
+- Any message asking about logged data ("how much did I", "did I reach", "what did I do") = COMMAND
+- Any message reporting activities with specific quantities/durations = COMMAND
+- Activities with numbers/measurements ("30 minutes", "2 glasses", "7 hours") = COMMAND
+
+Return ONLY the word: command or conversation
+"""
+            
+            result = self.llm_service.call(prompt, max_tokens=10, temperature=0.1)
+            classification = result.strip().lower()
+            
+            logger.info(f"[Intent Gate] Message: '{message[:50]}...' → {classification}")
+            
+            if "command" in classification:
+                return "command"
+            else:
+                return "conversation"
+                
+        except Exception as e:
+            logger.warning(f"[Intent Gate] Classification failed: {e}, defaulting to conversation")
+            return "conversation"  # Safe default
+
+    # ------------------------------------------------------------------ #
+    # ROUTING CHAIN
+    # ------------------------------------------------------------------ #
+
+    def _route(self, user_id: int, message: str, workflow_state) -> dict:
+        try:
+            msg_raw = message.strip()
+            msg_lower = msg_raw.lower()
+            msg_slug = msg_lower.replace(" ", "_")   # "log water" → "log_water"
+
+            # Normalise shorthand button names (e.g. "water" → "log_water")
+            if msg_slug in ACTIVITY_BUTTON_MAP:
+                msg_slug = ACTIVITY_BUTTON_MAP[msg_slug]
+                msg_lower = msg_slug
+                logger.info(f"[Route] Mapped button to '{msg_slug}'")
+
+            # Classify the incoming message once so every branch can read it
+            # CRITICAL FIX: Only treat simple patterns as buttons, not complex natural language
+            # "log_water" = button, "log_my_weight_now" = natural language
+            simple_log_buttons = [
+                'log_water', 'log_sleep', 'log_weight', 'log_exercise', 'log_mood',
+                'log_meal', 'log_steps', 'log_calories'
+            ]
+            is_log_btn = msg_slug in simple_log_buttons or (
+                msg_slug.startswith("log_") and len(msg_slug.split("_")) <= 2
+            )
+            is_start_content_btn = msg_slug.startswith("start_content_")
+            is_start_btn = msg_slug.startswith("start_") and not is_start_content_btn
+
+            # ========================================================== #
+            # 1. INTENT GATE (Two-Stage Classification)
+            # ========================================================== #
+            # Skip intent gate if:
+            # - It's a button click (always a command)
+            # - Intent gate is disabled
+            # - Workflow is waiting for custom input (date, time, duration, etc.)
+            # - Workflow is waiting for clarification (asking for specific value)
+            # 
+            # Check if workflow is awaiting custom input or clarification
+            workflow_data = workflow_state.workflow_data or {}
+            is_awaiting_input = any(key.startswith('awaiting_') for key in workflow_data.keys())
+            
+            # Check if this is a summary query (should complete active workflow and start fresh)
+            summary_query_keywords = [
+                'what did i', 'how much did i', 'how many did i', 'did i',
+                'have i logged', 'my activities', 'what have i',
+                'how much water did', 'how many hours did', 'what was my',
+                'my intake', 'my log', 'am i on track', 'how close am i',
+                'did i reach', 'am i meeting', 'show my water', 'show my sleep',
+                'what have i logged', 'show my activities',
+                # Additional logging query keywords from Test 3
+                'what did i track', 'show me what i\'ve logged', 'what activities did i log',
+                'did i log', 'have i logged', 'did i track', 'show my logging history',
+                'what have i been logging', 'show my activity history'
+            ]
+            is_summary_query = any(keyword in msg_lower for keyword in summary_query_keywords)
+            
+            # If it's a summary query and there's an active NON-LOGGING workflow, complete it first
+            # Logging workflows (activity_logging, exercise_logging, mood_logging) should NOT be completed
+            # because the user might be providing a follow-up answer like "5 glasses"
+            # But activity_query, challenges, etc. should be completed so summary can route properly
+            logging_workflows = ['activity_logging', 'exercise_logging', 'mood_logging']
+            is_logging_workflow = workflow_state.active_workflow in logging_workflows
+            
+            if is_summary_query and workflow_state.active_workflow and not is_logging_workflow:
+                logger.info(f"[Intent Gate] Summary query detected, completing non-logging workflow '{workflow_state.active_workflow}'")
+                workflow_state.complete_workflow()
+            
+            # For logging workflows with summary queries, we'll let the Intent Gate run
+            # so it can properly detect if this is a new intent or a clarification
+            # The Intent Gate will classify "5 glasses" as conversation (clarification)
+            # but "How much water did I drink?" as command (new intent)
+            
+            # Also check if workflow is in CLARIFICATION_PENDING state (asking for specific value)
+            # OR if there's any active workflow (let workflow handle its own inputs)
+            # BUT: Don't skip for summary queries (they should always get fresh routing)
+            is_awaiting_clarification = (
+                workflow_state.state.value == 'clarification_pending' or
+                (workflow_state.active_workflow is not None and not is_summary_query)  # Skip Intent Gate for active workflows UNLESS it's a summary query
+            )
+            
+            if (self.enable_intent_gate and 
+                not is_log_btn and 
+                not is_start_btn and
+                not is_start_content_btn and
+                not is_awaiting_input and
+                not is_awaiting_clarification):  # CRITICAL: Skip Intent Gate if workflow is waiting for clarification
+                
+                intent_type = self._classify_intent_type(message)
+                
+                if intent_type == "conversation":
+                    # If there's an active workflow but user is having conversation,
+                    # complete the workflow and start fresh
+                    if workflow_state.active_workflow:
+                        logger.info(f"[Intent Gate] User switched to conversation, completing workflow '{workflow_state.active_workflow}'")
+                        workflow_state.complete_workflow()
+                    
+                    # Route directly to general chat, skip all other routing
+                    logger.info("[Intent Gate] ✓ Classified as CONVERSATION → General Chat")
+                    workflow = self.registry.get_workflow_for_intent("general_chat")
+                    
+                    if workflow:
+                        response = workflow.start(message, workflow_state, user_id)
+                        workflow_state.add_message("assistant", response.message)
+                        return self._convert_response(response, workflow_state, "general_chat", user_id)
+                    else:
+                        logger.error("[Intent Gate] General chat workflow not found! This should never happen.")
+                        # CRITICAL: Don't fall through - return error response
+                        return {
+                            "message": "I'm here to help! How can I assist you today?",
+                            "ui_elements": [],
+                            "completed": True,
+                            "state": "idle",
+                        }
+                else:
+                    # It's a command, continue to existing routing
+                    logger.info("[Intent Gate] ✓ Classified as COMMAND → Continue routing")
+            elif is_awaiting_input:
+                logger.info(f"[Intent Gate] ⏭️ Skipping Intent Gate - workflow awaiting custom input")
+            elif is_awaiting_clarification:
+                logger.info(f"[Intent Gate] ⏭️ Skipping Intent Gate - workflow awaiting clarification")
+            
+            # ========================================================== #
+            # 2. BUTTON ROUTING (PRIORITY - before context router)
+            # ========================================================== #
+            # Handle button clicks FIRST to avoid context router interference
+            if is_log_btn:
+                logger.info(f"🔘 [BUTTON ROUTING] Detected log button: '{msg_slug}'")
+                
+                # Check if this is a workflow continuation button (log_activity_category, log_activity_select, etc.)
+                is_workflow_continuation = any(msg_slug.startswith(prefix) for prefix in [
+                    'log_activity_category:',
+                    'log_activity_select:',
+                    'log_activity_date:',
+                    'log_activity_time:',
+                    'log_activity_duration:'
+                ])
+                
+                # If it's a workflow continuation and we have an active workflow, continue it
+                if is_workflow_continuation and workflow_state.active_workflow == "exercise_logging":
+                    logger.info(f"🔄 [BUTTON ROUTING] Continuing exercise_logging workflow with: '{msg_slug}'")
+                    workflow = self.registry.get_workflow("exercise_logging")
+                    if workflow:
+                        response = workflow.process(msg_raw, workflow_state, user_id)
+                        workflow_state.add_message("assistant", response.message)
+                        return self._convert_response(response, workflow_state, "exercise_logging", user_id)
+                
+                # CRITICAL FIX: If a workflow is active, complete it before starting a new one
+                if workflow_state.active_workflow:
+                    logger.info(f"🔄 [BUTTON ROUTING] Completing active workflow '{workflow_state.active_workflow}' before starting new button action")
+                    workflow_state.complete_workflow()
+                
+                # log_mood is special – goes to mood workflow
+                if msg_slug == "log_mood":
+                    logger.info("[Route] log_mood button → mood workflow")
+                    return self._start_workflow("mood_logging", "Log Mood", workflow_state, user_id)
+                
+                # log_exercise is special – goes to exercise_logging workflow
+                if msg_slug == "log_exercise":
+                    logger.info("[Route] log_exercise button → exercise_logging workflow")
+                    return self._start_workflow("log_exercise", msg_slug, workflow_state, user_id)
+
+                # All other log_* → activity workflow
+                logger.info(f"[Route] log button '{msg_slug}' → activity workflow")
+                return self._start_workflow("activity_logging", msg_slug, workflow_state, user_id)
+
+            # ---------------------------------------------------------- #
+            # 3. CONTEXT ROUTER
+            # ---------------------------------------------------------- #
+            try:
+                from .context_router import ContextRouter
+
+                routed = ContextRouter().route_message(message, workflow_state, user_id)
+
+                if routed:
+                    logger.info("[Route] Context router handled message")
+                    workflow_state.update_activity_time()
+                    workflow_state.add_message("assistant", routed.message)
+                    return self._convert_response(routed, workflow_state, "context_router", user_id)
+
+            except Exception:
+                logger.warning("[Route] Context router error – continuing", exc_info=True)
+
+            # ---------------------------------------------------------- #
+            # 4. UNIVERSAL CONTEXT HANDLER (idle only)
+            # ---------------------------------------------------------- #
+            if workflow_state.is_idle():
+                try:
+                    from .universal_context_handler import get_universal_context_handler
+
+                    handler = get_universal_context_handler()
+
+                    if handler.can_handle_followup(message, workflow_state):
+                        response = handler.handle_followup(message, workflow_state, user_id)
+
+                        if response:
+                            logger.info("[Route] Universal context handled follow-up")
+                            workflow_state.add_message("assistant", response.message)
+                            return self._convert_response(
+                                response, workflow_state, "universal_context", user_id
+                            )
+
+                except Exception:
+                    logger.warning("[Route] Universal context error – continuing", exc_info=True)
+
+            # ---------------------------------------------------------- #
+            # 5. CONTINUE ACTIVE WORKFLOW
+            # ---------------------------------------------------------- #
+            if workflow_state.active_workflow and not workflow_state.is_idle():
+                workflow = self.registry.get_workflow(workflow_state.active_workflow)
+
+                if workflow:
+                    logger.info(f"[Route] Continuing workflow '{workflow_state.active_workflow}'")
+                    response = workflow.process(message, workflow_state, user_id)
+                    workflow_state.add_message("assistant", response.message)
+                    return self._convert_response(
+                        response, workflow_state, workflow.workflow_name, user_id
+                    )
+                else:
+                    logger.warning("[Route] Active workflow missing from registry – resetting")
+                    workflow_state.complete_workflow()
+
+            # ---------------------------------------------------------- #
+            # 6. "LOG AGAIN" SHORTCUT → mood workflow
+            # ---------------------------------------------------------- #
+            is_log_again = (
+                any(p in msg_lower for p in LOG_AGAIN_PHRASES)
+                and not any(w in msg_lower for w in LOG_AGAIN_EXCLUSIONS)
+            )
+
+            if is_log_again:
+                logger.info("[Route] 'Log again' → mood workflow")
+                return self._start_workflow("mood_logging", message, workflow_state, user_id)
+
+            # ---------------------------------------------------------- #
+            # 7. MOOD EXPRESSION DETECTION (free text, not a button)
+            # ---------------------------------------------------------- #
+            # DISABLED: Let general chat handle mood expressions naturally
+            # Only route explicit "log mood" commands
+            if not is_log_btn and not is_start_btn and not is_start_content_btn:
+                explicit_mood_log = any(phrase in msg_lower for phrase in ["log mood", "log my mood", "track mood"])
+                if explicit_mood_log:
+                    logger.info("[Route] Explicit mood log request → mood workflow")
+                    workflow_state.complete_workflow()
+                    return self._start_workflow("mood_logging", message, workflow_state, user_id)
+
+            # ---------------------------------------------------------- #
+            # 8. EXTERNAL / ACTIVITY-START BUTTONS
+            # ---------------------------------------------------------- #
+            if is_start_content_btn or is_start_btn:
+                logger.info(f"[Route] Activity-start button '{msg_raw}' → activity workflow")
+                return self._start_workflow("activity_logging", message, workflow_state, user_id)
+
+            # ---------------------------------------------------------- #
+            # 9. MOOD EMOJI DIRECT LOGGING
+            # ---------------------------------------------------------- #
+            try:
+                from .mood_handler import validate_mood_emoji
+
+                if validate_mood_emoji(msg_raw):
+                    logger.info(f"[Route] Mood emoji '{msg_raw}' → mood workflow")
+                    return self._start_workflow("mood_logging", message, workflow_state, user_id)
+
+            except Exception:
+                logger.warning("[Route] Mood emoji check failed – continuing", exc_info=True)
+
+            # ---------------------------------------------------------- #
+            # 10. LLM INTENT DETECTION
+            # ---------------------------------------------------------- #
+            logger.info("[Route] Falling back to LLM intent detection")
+
+            intent_result = self._detect_intent(message, workflow_state, user_id)
+            primary = intent_result.get("primary_intent", "general_chat")
+            secondary = intent_result.get("secondary_intent")
+
+            logger.info(f"[Route] Intent: primary={primary} secondary={secondary}")
+
+            # Stash entities so workflows can read them
+            if "entities" in intent_result:
+                workflow_state.set_workflow_data("intent_entities", intent_result["entities"])
+
+            workflow = self.registry.get_workflow_for_intent(primary)
+
+            if not workflow:
+                logger.warning(f"[Route] No workflow for intent '{primary}' – using general_chat")
+                workflow = self.registry.get_workflow_for_intent("general_chat")
+                
+                if not workflow:
+                    # Last resort: try to get GeneralWorkflow directly
+                    logger.error("[Route] general_chat workflow not found in registry!")
+                    logger.info(f"[Route] Available workflows: {self.registry.list_workflows()}")
+                    logger.info(f"[Route] Intent mappings: {list(self.registry.intent_to_workflow.keys())}")
+                    
+                    # Try to create it directly
+                    try:
+                        from .general_workflow import GeneralWorkflow
+                        workflow = GeneralWorkflow()
+                        logger.info("[Route] Created GeneralWorkflow directly as fallback")
+                    except Exception as e:
+                        logger.error(f"[Route] Failed to create GeneralWorkflow: {e}")
+
+            if not workflow:
+                return {
+                    "message": "I'm here to help! You can log your mood or activities anytime.",
+                    "ui_elements": [],
+                    "completed": True,
+                    "state": "idle",
+                }
+
+            # Multi-intent
+            if self.enable_multi_intent and secondary and secondary != "none":
+                return self._handle_multi_intent(
+                    message, workflow_state, user_id, primary, secondary
+                )
+
+            response = workflow.start(message, workflow_state, user_id)
+
+            if self.enable_validation:
+                validate_response(response, workflow.workflow_name, strict=False)
+
+            workflow_state.add_message("assistant", response.message)
+            return self._convert_response(response, workflow_state, workflow.workflow_name, user_id)
+
+        except Exception:
+            logger.exception(f"[Route] Routing error for user={user_id}")
+            from .fallback_responses import get_error_fallback
+            return get_error_fallback()
+
+    # ------------------------------------------------------------------ #
+    # HELPERS
+    # ------------------------------------------------------------------ #
+
+    def _start_workflow(self, intent: str, message: str, workflow_state, user_id: int) -> dict:
+        """Look up a workflow by intent, start it, and return the converted response."""
+        workflow = self.registry.get_workflow_for_intent(intent)
+
+        if not workflow:
+            logger.error(f"[Engine] No workflow registered for intent '{intent}'")
+            return {
+                "message": "I'm not sure how to help with that.",
+                "ui_elements": [],
+                "completed": True,
+                "state": "idle",
+            }
+
+        response = workflow.start(message, workflow_state, user_id)
+        workflow_state.add_message("assistant", response.message)
+        return self._convert_response(response, workflow_state, workflow.workflow_name, user_id)
+
+    def _detect_intent(self, message: str, workflow_state, user_id: int) -> dict:
+        """Detect intent via LLM with conversation context."""
         try:
             from chat_assistant.domain.llm.intent_extractor import get_intent_extractor
-            
+
             extractor = get_intent_extractor()
-            
-            # Pass conversation history for better context understanding
             context = {
-                'active_workflow': workflow_state.active_workflow,
-                'state': workflow_state.state.value,
-                'conversation_history': workflow_state.conversation_history  # Add conversation history
+                "active_workflow": workflow_state.active_workflow,
+                "state": workflow_state.state.value,
+                "conversation_history": workflow_state.conversation_history,
             }
-            
-            intent_result = extractor.extract_intent(message, context=context)
-            
-            return intent_result
-            
-        except Exception as e:
-            logger.error(f"Intent detection failed: {e}")
-            # Fallback to general chat
-            return {
-                'primary_intent': 'general_chat',
-                'secondary_intent': 'none',
-                'confidence': 0.5
-            }
-    
-    def _is_mood_expression(self, message: str) -> bool:
-        """
-        Check if message is a mood expression that should trigger mood workflow
-        
-        Returns True if message contains mood-related keywords or phrases
-        """
-        message_lower = message.lower().strip()
-        
-        # Mood keywords - common emotions
-        mood_keywords = [
-            'stressed', 'anxious', 'worried', 'nervous', 'overwhelmed',
-            'happy', 'sad', 'angry', 'frustrated', 'upset', 'down',
-            'excited', 'tired', 'exhausted', 'energetic', 'calm',
-            'depressed', 'joyful', 'content', 'lonely', 'scared',
-            'afraid', 'confident', 'proud', 'ashamed', 'guilty',
-            'relieved', 'hopeful', 'hopeless', 'bored', 'motivated',
-            'unmotivated', 'inspired', 'discouraged', 'peaceful',
-            'restless', 'comfortable', 'uncomfortable'
-        ]
-        
-        # Mood phrases - common expressions
-        mood_phrases = [
-            'i feel', "i'm feeling", 'i am', "i'm",
-            'feeling', 'not feeling', 'been feeling'
-        ]
-        
-        # Check for mood phrases + keywords
-        for phrase in mood_phrases:
-            if phrase in message_lower:
-                for keyword in mood_keywords:
-                    if keyword in message_lower:
-                        logger.info(f"Detected mood expression: phrase='{phrase}', keyword='{keyword}'")
+            return extractor.extract_intent(message, context=context)
+
+        except Exception:
+            logger.exception("[Engine] Intent detection failed – defaulting to general_chat")
+            return {"primary_intent": "general_chat", "secondary_intent": "none", "confidence": 0.5}
+
+    def _is_mood_expression(self, msg_lower: str) -> bool:
+        """Return True when the message reads as a free-text mood statement."""
+        # Phrase + keyword combo
+        for phrase in MOOD_PHRASES:
+            if phrase in msg_lower:
+                for kw in MOOD_KEYWORDS:
+                    if kw in msg_lower:
+                        logger.debug(f"[Mood] phrase='{phrase}' kw='{kw}'")
                         return True
-        
-        # Check for standalone mood keywords (like "stressed", "anxious")
-        # Only if message is short (likely a direct mood statement)
-        # Exclude button click patterns like "start_content_4", "log_water", etc.
-        if len(message_lower.split()) <= 3 and not any(pattern in message_lower for pattern in [
-            'start_', 'log_', 'content_', '_module', 'button'
-        ]):
-            for keyword in mood_keywords:
-                if keyword in message_lower:
-                    logger.info(f"Detected standalone mood keyword: '{keyword}'")
+
+        # Short standalone keyword (≤ 3 words, no button-like patterns)
+        button_patterns = ("start_", "log_", "content_", "_module", "button")
+        if len(msg_lower.split()) <= 3 and not any(p in msg_lower for p in button_patterns):
+            for kw in MOOD_KEYWORDS:
+                if kw in msg_lower:
+                    logger.debug(f"[Mood] standalone keyword='{kw}'")
                     return True
-        
+
         return False
-    
-    def _is_new_intent(self, message: str, workflow_state) -> bool:
-        """
-        Check if message is clearly a new intent (not a response to current workflow)
-        
-        Returns True if message contains keywords that indicate a new workflow should start
-        """
-        message_lower = message.lower()
-        
-        # Keywords that indicate new intents
-        new_intent_keywords = [
-            'i drank', 'i drink', 'drank', 'logged',
-            'show my challenges', 'my challenges', 'challenges',
-            'i exercised', 'i slept', 'i weigh',
-            'log water', 'log sleep', 'log exercise', 'log weight'
-        ]
-        
-        for keyword in new_intent_keywords:
-            if keyword in message_lower:
-                logger.info(f"Detected new intent keyword: '{keyword}' in message")
-                return True
-        
-        return False
-    
-    def _handle_multi_intent_message(self, message: str, workflow_state, user_id: str,
-                                     primary_intent: str, secondary_intent: str) -> dict:
-        """
-        Handle message with multiple intents by processing them sequentially
-        
-        Strategy:
-        1. Execute primary workflow
-        2. If it completes immediately, execute secondary
-        3. If primary needs input, defer secondary
-        4. Merge responses if both complete
-        """
-        logger.info(f"[Phase 1] Handling multi-intent: {primary_intent} + {secondary_intent}")
-        
-        # Get both workflows
-        primary_workflow = self.registry.get_workflow_for_intent(primary_intent)
-        secondary_workflow = self.registry.get_workflow_for_intent(secondary_intent)
-        
-        if not primary_workflow:
-            logger.warning(f"Primary workflow not found for intent: {primary_intent}")
+
+    def _maybe_load_db_history(self, user_id: str, workflow_state) -> None:
+        """Populate in-memory conversation history from DB after a restart."""
+        if workflow_state.conversation_history:
+            return   # already populated
+
+        try:
+            from app.repositories.chat_repository import ChatRepository
+
+            messages = ChatRepository().get_recent_messages(user_id, limit=10)
+
+            for msg in messages:
+                role = "user" if msg["sender"] == "user" else "assistant"
+                workflow_state.conversation_history.append(
+                    {"role": role, "content": msg["message"]}
+                )
+
+            logger.info(f"[Engine] Loaded {len(messages)} messages from DB for user={user_id}")
+
+        except Exception:
+            logger.warning("[Engine] Could not load DB conversation history", exc_info=True)
+
+    # ------------------------------------------------------------------ #
+    # MULTI-INTENT
+    # ------------------------------------------------------------------ #
+
+    def _handle_multi_intent(
+        self, message: str, workflow_state, user_id: int, primary: str, secondary: str
+    ) -> dict:
+        logger.info(f"[Multi-intent] primary={primary} secondary={secondary}")
+
+        primary_wf = self.registry.get_workflow_for_intent(primary)
+        secondary_wf = self.registry.get_workflow_for_intent(secondary)
+
+        if not primary_wf:
             return {
-                'message': "I'm not sure how to help with that.",
-                'ui_elements': [],
-                'completed': True,
-                'state': 'idle'
+                "message": "I'm not sure how to help with that.",
+                "ui_elements": [],
+                "completed": True,
+                "state": "idle",
             }
-        
-        # Execute primary workflow
-        primary_response = primary_workflow.start(message, workflow_state, user_id)
-        primary_result = self._convert_response(primary_response, workflow_state, primary_workflow.workflow_name, user_id)
-        
-        # If primary doesn't complete, return it (can't do secondary yet)
-        if not primary_response.completed:
-            logger.info("Primary workflow needs input, deferring secondary")
+
+        primary_resp = primary_wf.start(message, workflow_state, user_id)
+        primary_result = self._convert_response(
+            primary_resp, workflow_state, primary_wf.workflow_name, user_id
+        )
+
+        # Primary still needs input – can't run secondary yet
+        if not primary_resp.completed or not secondary_wf:
             return primary_result
-        
-        # Primary completed - try secondary if available
-        if not secondary_workflow:
-            logger.info("No secondary workflow found")
-            return primary_result
-        
-        # Reset state for secondary
+
+        # Run secondary
         workflow_state.complete_workflow()
-        
-        # Execute secondary workflow
-        secondary_response = secondary_workflow.start(message, workflow_state, user_id)
-        secondary_result = self._convert_response(secondary_response, workflow_state, secondary_workflow.workflow_name, user_id)
-        
-        # Merge responses
-        if not secondary_response.completed:
-            # Secondary needs input - prepend primary confirmation
-            secondary_result['message'] = f"{primary_result['message']} {secondary_result['message']}"
+        secondary_resp = secondary_wf.start(message, workflow_state, user_id)
+        secondary_result = self._convert_response(
+            secondary_resp, workflow_state, secondary_wf.workflow_name, user_id
+        )
+
+        # Merge messages
+        merged_msg = f"{primary_result['message']} {secondary_result['message']}"
+
+        if not secondary_resp.completed:
+            secondary_result["message"] = merged_msg
             return secondary_result
-        else:
-            # Both completed - merge
-            primary_result['message'] = f"{primary_result['message']} {secondary_result['message']}"
-            workflow_state.complete_workflow()
-            return primary_result
-    
-    def _convert_response(self, response, workflow_state, workflow_name: str, user_id: str = None) -> dict:
-        """
-        Convert WorkflowResponse to dict and publish events (Phase 2)
-        
-        Args:
-            response: WorkflowResponse from workflow
-            workflow_state: Current workflow state
-            workflow_name: Name of the workflow
-            user_id: User ID for event publishing
-        """
-        # IMPORTANT: Use workflow_state.state for the actual state, not response.next_state
-        # response.next_state is what the workflow wants to transition to
-        # but workflow_state.state is the actual current state
-        actual_state = workflow_state.state.value if workflow_state.state else 'idle'
-        
+
+        primary_result["message"] = merged_msg
+        workflow_state.complete_workflow()
+        return primary_result
+
+    # ------------------------------------------------------------------ #
+    # RESPONSE CONVERSION + EVENT PUBLISHING
+    # ------------------------------------------------------------------ #
+
+    def _convert_response(self, response, workflow_state, workflow_name: str, user_id) -> dict:
+        state = workflow_state.state.value if workflow_state.state else "idle"
+
         result = {
-            'message': response.message,
-            'ui_elements': response.ui_elements,
-            'completed': response.completed,
-            'state': actual_state  # Use actual workflow state, not response suggestion
+            "message": response.message,
+            "ui_elements": response.ui_elements,
+            "completed": response.completed,
+            "state": state,
         }
         result.update(response.extra_data)
-        
-        logger.info(f"Workflow {workflow_name} - completed: {response.completed}, state: {actual_state}, active_workflow: {workflow_state.active_workflow}")
-        
-        # Phase 2: Publish events if workflow completed
-        if response.completed and self.enable_events and response.events:
-            logger.info(f"[Phase 2] Publishing {len(response.events)} events")
+
+        logger.info(
+            f"[Engine] workflow={workflow_name} completed={response.completed} state={state}"
+        )
+
+        # Phase 2: publish events before completing workflow
+        if response.completed and self.enable_events and getattr(response, "events", None):
             for event in response.events:
-                self._publish_event(event, user_id or 'unknown')
-        
+                self._publish_event(event, str(user_id))
+
         if response.completed:
             workflow_state.complete_workflow()
-            logger.info(f"Workflow {workflow_name} completed and state reset")
-        
+            logger.info(f"[Engine] workflow={workflow_name} completed – state reset")
+
         return result
-    
-    def _publish_event(self, event: dict, user_id: str):
-        """
-        Publish event to event system (Phase 2)
-        
-        Args:
-            event: Event dictionary with 'type' and other data
-            user_id: User ID
-        """
+
+    def _publish_event(self, event: dict, user_id: str) -> None:
+        """Publish a workflow completion event (Phase 2). Never raises."""
         try:
             from app.services.event_publisher import get_event_publisher
             from app.services.behavior_scorer import get_behavior_scorer
-            
+
             publisher = get_event_publisher()
-            event_type = event.get('type')
-            
-            logger.info(f"[Phase 2] Publishing event: {event_type} for user {user_id}")
-            
-            # Publish to event store
-            if event_type == 'mood_logged':
+            event_type = event.get("type")
+
+            logger.info(f"[Events] Publishing '{event_type}' for user={user_id}")
+
+            if event_type == "mood_logged":
                 publisher.publish_mood_logged(
                     user_id=user_id,
-                    mood_emoji=event.get('mood'),
-                    reason=event.get('reason'),
-                    mood_value=event.get('mood_value')
+                    mood_emoji=event.get("mood"),
+                    reason=event.get("reason"),
+                    mood_value=event.get("mood_value"),
                 )
-                
-                # Update behavior metrics
                 try:
-                    scorer = get_behavior_scorer()
-                    scorer.update_mood_metrics(user_id, event)
-                    logger.info(f"[Phase 2] Updated behavior metrics for mood")
-                except Exception as e:
-                    logger.warning(f"Failed to update behavior metrics: {e}")
-                
-            elif event_type == 'activity_logged':
+                    get_behavior_scorer().update_mood_metrics(user_id, event)
+                except Exception:
+                    logger.warning("[Events] Behavior scorer (mood) failed", exc_info=True)
+
+            elif event_type == "activity_logged":
                 publisher.publish_activity_logged(
                     user_id=user_id,
-                    activity_type=event.get('activity_type'),
-                    value=event.get('value'),
-                    unit=event.get('unit')
+                    activity_type=event.get("activity_type"),
+                    value=event.get("value"),
+                    unit=event.get("unit"),
                 )
-                
-                # Update behavior metrics
                 try:
-                    scorer = get_behavior_scorer()
-                    scorer.update_activity_metrics(user_id, event)
-                    logger.info(f"[Phase 2] Updated behavior metrics for activity")
-                except Exception as e:
-                    logger.warning(f"Failed to update behavior metrics: {e}")
-                
-                # Update challenge progress
+                    get_behavior_scorer().update_activity_metrics(user_id, event)
+                except Exception:
+                    logger.warning("[Events] Behavior scorer (activity) failed", exc_info=True)
+
                 try:
                     from app.services.challenge_service import ChallengeService
-                    challenge_service = ChallengeService()
-                    challenge_service.update_progress_from_event(user_id, event)
-                    logger.info(f"[Phase 2] Updated challenge progress")
-                except Exception as e:
-                    logger.warning(f"Failed to update challenge progress: {e}")
-                
-            elif event_type == 'suggestion_shown':
+                    ChallengeService().update_progress_from_event(user_id, event)
+                except Exception:
+                    logger.warning("[Events] Challenge progress update failed", exc_info=True)
+
+            elif event_type == "suggestion_shown":
                 publisher.publish_suggestion_shown(
                     user_id=user_id,
-                    suggestion_key=event.get('suggestion_key'),
-                    mood_emoji=event.get('mood'),
-                    reason=event.get('reason')
+                    suggestion_key=event.get("suggestion_key"),
+                    mood_emoji=event.get("mood"),
+                    reason=event.get("reason"),
                 )
-                
-            elif event_type == 'suggestion_accepted':
+
+            elif event_type == "suggestion_accepted":
                 publisher.publish_suggestion_accepted(
                     user_id=user_id,
-                    suggestion_key=event.get('suggestion_key')
+                    suggestion_key=event.get("suggestion_key"),
                 )
-            
-            logger.info(f"[Phase 2] Event {event_type} published successfully")
-            
-        except Exception as e:
-            logger.error(f"[Phase 2] Failed to publish event {event.get('type')}: {e}")
-            # Don't fail the workflow if event publishing fails
-            import traceback
-            traceback.print_exc()
-    
+
+            logger.info(f"[Events] '{event_type}' published OK")
+
+        except Exception:
+            logger.error(f"[Events] Failed to publish '{event.get('type')}'", exc_info=True)
+
+    # ------------------------------------------------------------------ #
+    # INIT CONVERSATION
+    # ------------------------------------------------------------------ #
+
     def init_conversation(self, user_id: str) -> dict:
-        """
-        Initialize conversation with smart UI based on mood status.
-        - If mood NOT logged today: Show MOOD SELECTOR + activity buttons (without Log Mood)
-        - If mood logged today: Show activity buttons (with Log Mood)
-        """
         try:
             from .mood_handler import has_logged_mood_today
             from .unified_state import get_workflow_state
-            
-            # Reset workflow state on init
-            workflow_state = get_workflow_state(user_id)
+
+            uid = int(user_id)
+            workflow_state = get_workflow_state(uid)
             workflow_state.complete_workflow()
-            logger.info(f"Init conversation - reset workflow state for user {user_id}")
-            
-            # Check if user has logged mood today
-            mood_logged_today = has_logged_mood_today(user_id)
-            
-            if not mood_logged_today:
-                # Mood NOT logged - show MOOD SELECTOR + activity buttons (WITHOUT Log Mood)
+
+            activity_buttons = [
+                {"id": "log_water",    "label": "💧 Log Water"},
+                {"id": "log_sleep",    "label": "😴 Log Sleep"},
+                {"id": "log_exercise", "label": "🏃 Log Exercise"},
+                {"id": "log_weight",   "label": "⚖️ Log Weight"},
+                {"id": "log_steps",    "label": "👟 Log Steps"},
+                {"id": "log_calories", "label": "🔥 Log Calories"},
+                {"id": "log_meal",     "label": "🍽️ Log Meal"},
+                {"id": "log_mood",     "label": "😊 Log Mood"},
+            ]
+
+            if not has_logged_mood_today(uid):
+                # Show mood selector + activity buttons WITHOUT Log Mood
                 return {
-                    'message': "Welcome! How are you feeling today? 😊",
-                    'ui_elements': ['emoji_selector', 'activity_buttons'],
-                    'activity_options': [
-                        {'id': 'log_water', 'label': '💧 Log Water'},
-                        {'id': 'log_sleep', 'label': '😴 Log Sleep'},
-                        {'id': 'log_exercise', 'label': '🏃 Log Exercise'},
-                        {'id': 'log_weight', 'label': '⚖️ Log Weight'}
-                        # NO Log Mood button - mood selector is shown above
-                    ],
-                    'persistent_buttons': False,
-                    'completed': False,
-                    'state': 'idle'
+                    "message": "Hey! How are you feeling today?",
+                    "ui_elements": ["emoji_selector", "activity_buttons"],
+                    "activity_options": activity_buttons[:-1],   # exclude log_mood
+                    "persistent_buttons": False,
+                    "completed": False,
+                    "state": "idle",
                 }
-            else:
-                # Mood already logged - show activity buttons (WITH Log Mood)
-                return {
-                    'message': "Welcome back! What would you like to track? 🌟",
-                    'ui_elements': ['activity_buttons'],
-                    'activity_options': [
-                        {'id': 'log_water', 'label': '💧 Log Water'},
-                        {'id': 'log_sleep', 'label': '😴 Log Sleep'},
-                        {'id': 'log_exercise', 'label': '🏃 Log Exercise'},
-                        {'id': 'log_weight', 'label': '⚖️ Log Weight'},
-                        {'id': 'log_mood', 'label': '😊 Log Mood'}
-                        # Log Mood button available - can log mood again
-                    ],
-                    'persistent_buttons': False,
-                    'completed': True,
-                    'state': 'idle'
-                }
-        except Exception as e:
-            logger.error(f"Error in init_conversation for user {user_id}: {e}")
-            import traceback
-            traceback.print_exc()
-            
-            # Return a fallback response
+
+            # Mood already logged – show all buttons including Log Mood
             return {
-                'message': "Welcome! What would you like to track? 🌟",
-                'ui_elements': ['activity_buttons'],
-                'activity_options': [
-                    {'id': 'log_water', 'label': '💧 Log Water'},
-                    {'id': 'log_sleep', 'label': '😴 Log Sleep'},
-                    {'id': 'log_exercise', 'label': '🏃 Log Exercise'},
-                    {'id': 'log_weight', 'label': '⚖️ Log Weight'},
-                    {'id': 'log_mood', 'label': '😊 Log Mood'}
+                "message": "Hey there! What do you want to track?",
+                "ui_elements": ["activity_buttons"],
+                "activity_options": activity_buttons,
+                "persistent_buttons": False,
+                "completed": True,
+                "state": "idle",
+            }
+
+        except Exception:
+            logger.exception(f"[Engine] init_conversation failed for user={user_id}")
+            return {
+                "message": "Welcome! What would you like to track? 🌟",
+                "ui_elements": ["activity_buttons"],
+                "activity_options": [
+                    {"id": "log_water",    "label": "💧 Log Water"},
+                    {"id": "log_sleep",    "label": "😴 Log Sleep"},
+                    {"id": "log_exercise", "label": "🏃 Log Exercise"},
+                    {"id": "log_weight",   "label": "⚖️ Log Weight"},
+                    {"id": "log_steps",    "label": "👟 Log Steps"},
+                    {"id": "log_calories", "label": "🔥 Log Calories"},
+                    {"id": "log_meal",     "label": "🍽️ Log Meal"},
+                    {"id": "log_mood",     "label": "😊 Log Mood"},
                 ],
-                'persistent_buttons': False,
-                'completed': True,
-                'state': 'idle'
+                "persistent_buttons": False,
+                "completed": True,
+                "state": "idle",
             }
 
 
-# Global instance
-_engine = None
+# ------------------------------------------------------------------ #
+# GLOBAL SINGLETON
+# ------------------------------------------------------------------ #
+
+_engine: ChatEngineWorkflow | None = None
+
 
 def get_chat_engine() -> ChatEngineWorkflow:
-    """Get or create the global chat engine instance"""
     global _engine
     if _engine is None:
         _engine = ChatEngineWorkflow()
@@ -725,12 +893,8 @@ def get_chat_engine() -> ChatEngineWorkflow:
 
 
 def process_message(user_id: str, message: str) -> dict:
-    """Convenience function for processing messages"""
-    engine = get_chat_engine()
-    return engine.process_message(user_id, message)
+    return get_chat_engine().process_message(user_id, message)
 
 
 def init_conversation(user_id: str) -> dict:
-    """Convenience function for initializing conversation"""
-    engine = get_chat_engine()
-    return engine.init_conversation(user_id)
+    return get_chat_engine().init_conversation(user_id)

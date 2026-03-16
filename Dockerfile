@@ -1,27 +1,23 @@
-# Multi-stage build for production deployment
+# Use Python 3.11 slim image
 FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install dependencies
+# Copy requirements first for better caching
 COPY backend/requirements.txt .
+
+# Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY backend/ ./backend/
-COPY frontend/ ./frontend/
-COPY index.html .
+# Copy backend code
+COPY backend/ .
 
-# Set Python path
-ENV PYTHONPATH=/app/backend
-
-# Initialize database and start server
-WORKDIR /app/backend
-RUN python init_db_complete.py
+# Create necessary directories
+RUN mkdir -p /app/data
 
 # Expose port
 EXPOSE 8000
 
-# Start command
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Command to run the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

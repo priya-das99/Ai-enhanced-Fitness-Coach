@@ -25,73 +25,36 @@ def detect_intent(user_message: str, conversation_history: Optional[List[Dict]] 
     return _keyword_intent_detection(user_message)
 
 def _keyword_intent_detection(user_message: str) -> str:
-    """Fallback keyword-based intent detection"""
+    """Fallback keyword-based intent detection - SIMPLIFIED for natural conversation"""
     message_lower = user_message.lower()
     
-    # Activity query keywords - check first (most specific)
-    # These are explicit requests for activity suggestions
-    activity_keywords = [
-        'what activity', 'what can i do', 'suggest activity',
-        'activities for', 'activity for', 'what should i do',
-        'recommend activity', 'activities to', 'what to do',
-        'suggest something', 'what would help'
-    ]
+    # Only detect EXPLICIT logging requests
+    # Let general chat handle conversational mentions
     
-    for keyword in activity_keywords:
-        if keyword in message_lower:
-            return 'activity_query'
+    # Explicit mood logging
+    if any(phrase in message_lower for phrase in ['log mood', 'track mood', 'record mood', 'log my mood']):
+        return 'log_mood'
     
-    # "help me with X" or "help with X" where X is a problem (not a feeling)
-    # This is tricky - if they say "help me with stress" it could be either
-    # But if they say "help me with anxiety" followed by a question mark or "what", it's likely activity query
-    if ('help me with' in message_lower or 'help with' in message_lower):
-        # If it contains question words, it's likely asking for suggestions
-        if any(word in message_lower for word in ['what', 'how', '?']):
-            return 'activity_query'
+    # Explicit activity logging
+    if any(phrase in message_lower for phrase in ['log workout', 'log activity', 'log exercise', 'track workout']):
+        return 'activity_logging'
     
-    # Challenge query keywords
+    # Challenge queries
     challenge_keywords = [
-        'challenge', 'challenges', 'my challenge', 'challenge progress',
-        'start challenge', 'join challenge'
+        'start challenge', 'join challenge', 'my challenge', 'challenge progress'
     ]
-    
     for keyword in challenge_keywords:
         if keyword in message_lower:
             return 'challenge_query'
     
-    # Mood-related keywords - expanded list
-    mood_keywords = [
-        'feel', 'feeling', 'mood', 'emotion', 'happy', 'sad',
-        'anxious', 'stressed', 'great', 'terrible', 'okay',
-        'good', 'bad', 'angry', 'worried', 'excited', 'tired',
-        'depressed', 'nervous', 'calm', 'frustrated', 'down',
-        'upset', 'joyful', 'content', 'overwhelmed', 'well',
-        'unwell', 'sick', 'ill', 'awful', 'horrible', 'amazing',
-        'fantastic', 'wonderful', 'miserable', 'lonely', 'scared',
-        'afraid', 'confident', 'proud', 'ashamed', 'guilty',
-        'relieved', 'hopeful', 'hopeless', 'energetic', 'exhausted',
-        'bored', 'interested', 'confused', 'clear', 'motivated',
-        'unmotivated', 'inspired', 'discouraged', 'peaceful',
-        'restless', 'comfortable', 'uncomfortable', 'safe', 'unsafe'
+    # Activity suggestions (explicit requests only)
+    activity_keywords = [
+        'suggest workout', 'recommend workout', 'what workout',
+        'suggest exercise', 'recommend exercise', 'what exercise'
     ]
-    
-    # Mood phrases - common expressions
-    mood_phrases = [
-        'not feeling', 'feeling like', 'i feel', "i'm feeling",
-        'i am', "i'm not", 'i am not', 'having a', 'been feeling',
-        'log mood', 'track mood', 'record mood', 'check in',
-        'how i feel', 'my mood', 'today i', 'right now i'
-    ]
-    
-    # Check for mood phrases first (more specific)
-    for phrase in mood_phrases:
-        if phrase in message_lower:
-            return 'log_mood'
-    
-    # Check for mood keywords
-    for keyword in mood_keywords:
+    for keyword in activity_keywords:
         if keyword in message_lower:
-            return 'log_mood'
+            return 'activity_query'
     
-    # Default to unknown
+    # Default to general chat - let LLM handle it naturally
     return 'unknown'

@@ -6,8 +6,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE = os.path.join(BASE_DIR, 'mood_capture.db')
 
 def get_connection():
-    """Get a database connection."""
-    conn = sqlite3.connect(DATABASE)
+    """
+    Get a database connection with timeout.
+    
+    Timeout prevents immediate lock failures when multiple requests
+    try to write to SQLite simultaneously.
+    """
+    conn = sqlite3.connect(DATABASE, timeout=10.0)  # 10 second timeout
     conn.row_factory = sqlite3.Row  # This enables column access by name
     return conn
 

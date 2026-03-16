@@ -17,21 +17,21 @@ class ResponseTemplates:
     
     TEMPLATES = {
         "breathing": {
-            "how_long": "Start with 3-5 minutes. Ready to try a quick session?",
-            "when": "Anytime you feel stressed or need focus. Want to try now?",
-            "benefits": "Reduces stress, improves focus, and calms your mind. Let's do a session together!",
-            "how_to": "I'll guide you through it! Ready to start a 3-minute breathing exercise?",
-            "night": "Evening breathing exercises help you relax before bed. Want to try one?",
-            "work": "Perfect for work breaks! Let's do a quick 3-minute session.",
-            "anxiety": "Breathing exercises are excellent for anxiety. Ready to try one now?"
+            "how_long": "Usually 3-5 minutes works well. Want to try one?",
+            "when": "Anytime you're feeling stressed. Ready to give it a shot?",
+            "benefits": "It's great for stress and focus. Let's do a quick session!",
+            "how_to": "I can guide you through it. Ready?",
+            "night": "Perfect for winding down. Want to try one?",
+            "work": "Great for work breaks! Let's do a quick one.",
+            "anxiety": "Breathing really helps with anxiety. Want to try?"
         },
         "sleep": {
-            "how_much": "Most adults need 7-9 hours. Let's log your sleep so I can give personalized insights.",
-            "tips": "Regular schedule helps most. Want to track your sleep tonight?",
-            "cant_sleep": "Let's log when you went to bed and I'll help identify patterns.",
-            "quality": "Sleep quality matters as much as duration. Let's track yours.",
-            "tired": "Tracking your sleep will help us figure out why. Want to log last night?",
-            "insomnia": "Let's start tracking your sleep patterns to identify what's affecting your rest."
+            "how_much": "Most people need 7-9 hours. Want to track yours?",
+            "tips": "Regular schedule helps. Want to log tonight's sleep?",
+            "cant_sleep": "That's rough. Let's track your sleep patterns.",
+            "quality": "Quality matters as much as hours. Let's track it.",
+            "tired": "Sleep tracking might help figure out why. Log last night?",
+            "insomnia": "Let's start tracking your sleep to see what's going on."
         },
         "exercise": {
             "how_long": "Start with 5-10 minutes. Ready for a quick workout?",

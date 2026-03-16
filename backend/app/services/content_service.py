@@ -142,6 +142,23 @@ def get_activities_for_mood(mood: str, limit: int = 10) -> List[Dict]:
         logger.error(f"❌ Database query failed for mood '{mood}': {e}")
         return []
 
+class ContentService:
+    """
+    Content Service class for compatibility with existing imports
+    Provides methods for querying wellness activities from database
+    """
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+    
+    def get_activities_for_mood(self, mood: str, limit: int = 10) -> List[Dict]:
+        """Get activities for a specific mood"""
+        return get_activities_for_mood(mood, limit)
+    
+    def normalize_activity_format(self, activity: Dict) -> Dict:
+        """Normalize activity format"""
+        return normalize_activity_format(activity)
+
 def normalize_activity_format(activity: Dict) -> Dict:
     """
     Ensure activity has all required fields for ranking

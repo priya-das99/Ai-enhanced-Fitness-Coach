@@ -21,6 +21,10 @@ class IntentExtractor:
     # Intent types
     INTENT_MOOD_LOGGING = "mood_logging"
     INTENT_ACTIVITY_LOGGING = "activity_logging"
+    INTENT_LOG_EXERCISE = "log_exercise"
+    INTENT_LOG_WATER = "log_water"
+    INTENT_LOG_SLEEP = "log_sleep"
+    INTENT_LOG_WEIGHT = "log_weight"
     INTENT_ACTIVITY_QUERY = "activity_query"  # For activity suggestions
     INTENT_ACTIVITY_SUMMARY = "activity_summary"  # For viewing logged activities
     INTENT_CHALLENGES = "challenges"
@@ -51,7 +55,7 @@ class IntentExtractor:
             # Build prompt with context
             prompt = self._build_prompt(message, context)
             
-            # Define JSON schema (strict mode requires all properties to be required or none)
+            # Define JSON schema with optional entity fields
             schema = {
                 "type": "object",
                 "properties": {
@@ -59,6 +63,13 @@ class IntentExtractor:
                         "type": "string",
                         "enum": [
                             "mood_logging",
+                            "log_exercise",
+                            "log_water",
+                            "log_sleep",
+                            "log_weight",
+                            "log_meal",
+                            "log_steps",
+                            "log_calories",
                             "activity_logging",
                             "activity_query",
                             "activity_summary",
@@ -72,6 +83,13 @@ class IntentExtractor:
                         "type": "string",
                         "enum": [
                             "mood_logging",
+                            "log_exercise",
+                            "log_water",
+                            "log_sleep",
+                            "log_weight",
+                            "log_meal",
+                            "log_steps",
+                            "log_calories",
                             "activity_logging",
                             "activity_query",
                             "activity_summary",
@@ -89,12 +107,12 @@ class IntentExtractor:
                     "entities": {
                         "type": "object",
                         "properties": {
-                            "mood_emoji": {"type": "string"},
-                            "activity_type": {"type": "string"},
-                            "quantity": {"type": "number"},
-                            "unit": {"type": "string"}
+                            "mood_emoji": {"type": ["string", "null"]},
+                            "activity_type": {"type": ["string", "null"]},
+                            "quantity": {"type": ["number", "null"]},
+                            "unit": {"type": ["string", "null"]}
                         },
-                        "required": ["mood_emoji", "activity_type", "quantity", "unit"],  # ← All properties required in strict mode
+                        "required": [],  # No required fields - all optional
                         "additionalProperties": False
                     }
                 },
@@ -134,109 +152,292 @@ You MUST choose only from the allowed intent list.
 
 Allowed primary_intent values:
 - mood_logging
-- activity_logging
+- log_exercise
+- log_water
+- log_sleep
+- log_weight
+- log_meal
+- log_steps
+- log_calories
+- activity_logging (ONLY for activities that don't fit the specific types above)
 - activity_query
 - challenges
 - general_chat
 - clarification
 - off_topic
 
-Definitions:
+# ============================================================================
+# PRIORITY RULES (CRITICAL - CHECK THESE FIRST!)
+# ============================================================================
 
-1) mood_logging
-User expresses feelings, emotions, or physical/mental states.
-Includes emotional statements, standalone emojis, and state descriptions.
+1. SPECIFIC ACTIVITY INTENTS > GENERIC ACTIVITY_LOGGING
+   - "I want to log exercise" → log_exercise (NOT activity_logging)
+   - "I want log weight" → log_weight (NOT activity_logging)
+   - "I want to track water" → log_water (NOT activity_logging)
+   - "I want to log sleep" → log_sleep (NOT activity_logging)
+   - "I want to log meal" → log_meal (NOT activity_logging)
+   - "I want to log steps" → log_steps (NOT activity_logging)
+   - "I want to log calories" → log_calories (NOT activity_logging)
+   - "log workout" → log_exercise (NOT activity_logging)
+   - "track my water intake" → log_water (NOT activity_logging)
+
+2. REQUESTS > EXPRESSIONS
+   - "suggest activities for mood" → activity_query (NOT mood_logging)
+   - "suggest me some mood activities" → activity_query (NOT mood_logging)
+   - "recommend activities" → activity_query (NOT mood_logging)
+   - "I'm stressed" → mood_logging (expressing, not requesting)
+
+3. EXPLICIT COMMANDS > IMPLICIT EXPRESSIONS
+   - "log mood" → mood_logging (explicit command)
+   - "I feel sad" → mood_logging (implicit expression)
+   - "log water" → log_water (explicit command)
+
+4. ACTION VERBS INDICATE INTENT
+   - suggest/recommend/show/give/tell → activity_query
+   - log/track/record → logging intent (use SPECIFIC type if possible)
+   - feel/am/being → mood expression
+
+5. QUESTION WORDS + WELLNESS = ACTIVITY_QUERY
+   - "what can I do" → activity_query
+   - "what activities" → activity_query
+   - "how do I" → activity_query
+
+# ============================================================================
+# INTENT DEFINITIONS (Check in this order)
+# ============================================================================
+
+1) activity_query (CHECK FIRST!)
+User REQUESTS or ASKS FOR activity suggestions, recommendations, or information.
+
+Key indicators:
+- suggest, recommend, show me, give me, tell me about
+- what can I do, what should I do, what activities
+- help me with, help me find
+- I want to [wellness activity]
+
 Examples:
+"suggest activities for stress"
+"suggest me some mood activities"  ← CRITICAL: This is activity_query!
+"suggest activities on mindfulness"
+"recommend something for anxiety"
+"what can I do for stress"
+"what activities help with sleep"
+"show me activities for anxiety"
+"tell me about meditation"
+"help me with stress activities"
+"I want to meditate"
+"I want to do breathing exercises"
+"give me some activity suggestions"
+
+IMPORTANT: 
+- ANY message with "suggest", "recommend", "show me", "what can I do" = activity_query
+- Even if message contains "mood", if it's a REQUEST, it's activity_query
+- "suggest me some mood activities" = activity_query (requesting suggestions)
+- "I'm in a bad mood" = mood_logging (expressing emotion)
+
+2) SPECIFIC ACTIVITY LOGGING INTENTS (CHECK BEFORE GENERIC activity_logging!)
+
+2a) log_exercise
+User wants to log exercise, workout, or physical activity.
+
+Key indicators:
+- log exercise, track exercise, record exercise
+- log workout, track workout
+- I want to log exercise, I want log exercise
+- I want to track my workout
+- worked out, exercised, went to gym
+
+Examples:
+"I want to log exercise"
+"I want log exercise"
+"log exercise"
+"track my workout"
+"I worked out 30 minutes"
+"I exercised today"
+"log workout"
+"I want to track exercise"
+
+2b) log_water
+User wants to log water intake.
+
+Key indicators:
+- log water, track water, record water
+- I want to log water, I want log water
+- drank water, drink water
+- water intake, hydration
+
+Examples:
+"I want to log water"
+"I want log water"
+"log water"
+"track my water intake"
+"I drank 2 glasses"
+"I want to track water"
+"log hydration"
+
+2c) log_sleep
+User wants to log sleep.
+
+Key indicators:
+- log sleep, track sleep, record sleep
+- I want to log sleep, I want log sleep
+- slept, sleep hours
+- rest, rested
+
+Examples:
+"I want to log sleep"
+"I want log sleep"
+"log sleep"
+"track my sleep"
+"I slept 7 hours"
+"I want to track sleep"
+"log rest"
+
+2d) log_weight
+User wants to log weight.
+
+Key indicators:
+- log weight, track weight, record weight
+- I want to log weight, I want log weight
+- weigh, weight measurement
+- kg, lbs, pounds
+
+Examples:
+"I want to log weight"
+"I want log weight"
+"log weight"
+"track my weight"
+"I weigh 70 kg"
+"I want to track weight"
+"update my weight"
+
+2e) log_meal
+User wants to log meal or food intake.
+
+Key indicators:
+- log meal, track meal, record meal
+- I want to log meal, I want log meal
+- log food, track food, food intake
+- ate, had lunch, had dinner, had breakfast
+- meal, food, nutrition
+
+Examples:
+"I want to log meal"
+"I want log meal"
+"log meal"
+"track my meal"
+"I had lunch"
+"I want to track food"
+"log my breakfast"
+"record what I ate"
+
+2f) log_steps
+User wants to log steps or step count.
+
+Key indicators:
+- log steps, track steps, record steps
+- I want to log steps, I want log steps
+- step count, daily steps, walking steps
+- walked, steps taken
+
+Examples:
+"I want to log steps"
+"I want log steps"
+"log steps"
+"track my steps"
+"I walked 8500 steps"
+"I want to track step count"
+"log my daily steps"
+"record my walking"
+
+2g) log_calories
+User wants to log calories or caloric intake.
+
+Key indicators:
+- log calories, track calories, record calories
+- I want to log calories, I want log calories
+- calorie intake, caloric intake, energy intake
+- consumed calories, ate calories
+
+Examples:
+"I want to log calories"
+"I want log calories"
+"log calories"
+"track my calories"
+"I consumed 350 calories"
+"I want to track calorie intake"
+"log my energy intake"
+"record calories consumed"
+
+2h) activity_logging (GENERIC - ONLY if no specific type matches)
+User wants to log measurable health data that doesn't fit the specific types above.
+
+IMPORTANT: 
+- ONLY use activity_logging if the activity doesn't match exercise, water, sleep, weight, meal, steps, or calories
+- ALWAYS prefer specific intents (log_exercise, log_water, log_meal, etc.) over activity_logging
+- "I want to log exercise" = log_exercise (NOT activity_logging)
+- "I want log weight" = log_weight (NOT activity_logging)
+- "I want to log meal" = log_meal (NOT activity_logging)
+
+3) mood_logging
+User wants to LOG their emotional state (explicit command) OR expresses feelings.
+
+Key indicators:
+- log mood, track mood, record mood (explicit)
+- I feel, I'm feeling, I am + emotion (expression)
+- Standalone emotions: stressed, happy, sad, anxious
+
+Examples:
+"log mood"
+"I want to track my mood"
 "I'm stressed"
-"Feeling great"
+"feeling anxious"
 "I am tired"
 "I feel exhausted"
-"I'm bored"
 "😟"
 
-IMPORTANT: "tired", "exhausted", "bored", "sleepy" are MOOD states, not activity logging.
-
-2) activity_logging
-User wants to log measurable health data OR expresses intent to log/update/track activities.
-Supported activity types:
-- water (ml, glasses)
-- sleep (hours)
-- exercise (minutes, workout)
-- weight (kg, lbs)
-
-Examples WITH numbers (complete):
-"I drank 2 glasses of water"
-"Slept 7 hours"
-"Worked out 30 minutes"
-"I weigh 70 kg"
-
-Examples WITHOUT numbers (intent to log):
-"I want to log water"
-"I want to update weight"
-"I want to track my sleep"
-"log exercise"
-
 IMPORTANT: 
-- If message mentions logging/updating/tracking water/sleep/exercise/weight → activity_logging
-- "I am tired" = mood_logging (expressing feeling, no intent to log)
-- "I want to log sleep" = activity_logging (intent to log)
-- "I slept 6 hours" = activity_logging (has number)
-
-3) activity_query
-User asks for activity suggestions, recommendations, or information about wellness activities.
-This includes:
-- Asking for suggestions/recommendations
-- Asking about specific activity types (mindfulness, yoga, meditation, etc.)
-- Expressing desire to do a wellness activity
-- Asking "what can I do" or "tell me about"
-
-Examples:
-"what activity for stress"
-"what can I do for anxiety"
-"suggest activities for relaxation"
-"suggest some activities on mindfulness"
-"tell me about yoga"
-"tell me about meditation"
-"what should I do for sleep"
-"activities to help with work stress"
-"recommend something for anxiety"
-"I want to meditate"
-"I want to meditation"
-"I want to do breathing exercises"
-"I want to journal"
-"I want to relax"
-"show me mindfulness activities"
-"what are some exercises for stress"
-"help me with anxiety activities"
-
-IMPORTANT: 
-- ANY request for suggestions/recommendations = activity_query
-- "Tell me about [activity type]" = activity_query (asking for info)
-- "Suggest activities on [topic]" = activity_query (asking for suggestions)
-- "I want to [wellness activity]" = activity_query (user wants to DO an activity)
-- "I'm stressed" = mood_logging (expressing feeling only, no request)
-- "what activity for stress" = activity_query (asking for help)
+- "tired", "exhausted", "bored", "sleepy" are MOOD states
+- "I'm stressed" = mood_logging (expressing feeling)
+- "suggest activities for stress" = activity_query (requesting help)
 
 4) activity_summary
-User asks to VIEW/RETRIEVE their logged activities or health data.
+User asks to VIEW/RETRIEVE/CHECK their logged activities or health data.
 This is DIFFERENT from activity_logging (which is for LOGGING new data).
+This is DIFFERENT from activity_query (which is for REQUESTING suggestions).
+
+Key indicators:
+- Question words about past actions: "did I", "have I", "how much did I", "how many"
+- Viewing requests: "show me my", "what did I", "what have I"
+- Progress checks: "am I on track", "how close am I", "did I reach"
+- Status queries: "what was my", "my intake", "my log"
 
 Examples:
 "What did I do today?"
 "Show me my activities"
 "How much water did I drink?"
+"How much water did I drink today?"
 "Did I exercise today?"
 "What's my water intake today?"
 "Show me my sleep log"
 "Have I logged my mood?"
 "What have I tracked today?"
 "My activities today"
+"How many hours did I sleep?"
+"What was my mood today?"
+"Show my water intake for today"
+"Am I on track today?"
+"How close am I to my targets?"
+"Did I reach my water goal?"
+"Am I meeting my goals?"
 
-IMPORTANT:
-- "I drank 2 glasses" = activity_logging (LOGGING new data)
-- "How much did I drink" = activity_summary (RETRIEVING logged data)
-- "Did I exercise" = activity_summary (CHECKING if logged)
-- "What did I do" = activity_summary (VIEWING activities)
+CRITICAL DISTINCTION:
+- "How much water did I drink?" = activity_summary (VIEWING past data)
+- "How much water should I drink?" = activity_query (REQUESTING advice)
+- "Did I exercise today?" = activity_summary (CHECKING logged data)
+- "What exercise should I do?" = activity_query (REQUESTING suggestions)
+- "I drank 2 glasses" = log_water (LOGGING new data)
+- "Suggest activities for stress" = activity_query (REQUESTING suggestions)
 
 5) challenges
 User asks about:
@@ -268,14 +469,14 @@ If message includes phrases like:
 "what more" + challenge-related terms
 → classify as challenges
 
-5) general_chat
+6) general_chat
 Greetings, onboarding, help questions, thanks.
 Examples:
 "Hello"
 "What can you do?"
 "Thanks"
 
-5) clarification
+7) clarification
 Short follow-up responses:
 "yes"
 "no"
@@ -283,7 +484,7 @@ Short follow-up responses:
 "5"
 "2 glasses"
 
-6) off_topic
+8) off_topic
 Unrelated, abusive, or non-wellness content.
 Weather, politics, sports, jokes, profanity, spam.
 
@@ -294,7 +495,7 @@ MULTI-INTENT RULES:
 If message contains BOTH emotion and activity:
 - Detect both.
 - If equal importance, set mood_logging as primary.
-- If measurable logging is the main action, activity_logging is primary.
+- If measurable logging is the main action, use SPECIFIC activity intent as primary.
 
 If message contains challenge query AND emotion:
 - challenges is primary.
@@ -303,26 +504,32 @@ If message contains challenge query AND emotion:
 
 ENTITY EXTRACTION RULES:
 
-Return ALL entity fields.
-
-entities must contain:
-- mood_emoji (string or "")
-- activity_type (water | sleep | exercise | weight | "")
-- quantity (number or 0)
-- unit (ml | glasses | hours | minutes | kg | lbs | "")
+entities object can contain (all optional):
+- mood_emoji: string or null (e.g., "😟", "😊", or null)
+- activity_type: "water" | "sleep" | "exercise" | "weight" | null
+- quantity: number or null (e.g., 2, 7.5, or null)
+- unit: "ml" | "glasses" | "hours" | "minutes" | "kg" | "lbs" | null
 
 Rules:
-- If not present, return empty string "" or 0.
-- Never guess missing numbers.
-- Do NOT invent units.
-- If user says "worked out", activity_type = exercise, quantity = 0, unit = "".
+- Only include fields that are explicitly mentioned
+- If not present, use null (not empty string or 0)
+- Never guess missing numbers
+- Do NOT invent units
+- If user says "worked out" without quantity, activity_type = "exercise", quantity = null, unit = null
+
+Examples:
+- "suggest activities" → entities: {{}}
+- "I'm stressed 😟" → entities: {{"mood_emoji": "😟"}}
+- "I drank 2 glasses" → entities: {{"activity_type": "water", "quantity": 2, "unit": "glasses"}}
+- "I want to log water" → entities: {{"activity_type": "water"}}
+- "I want to log exercise" → entities: {{"activity_type": "exercise"}}
 
 ---
 
 DISAMBIGUATION PRIORITY:
 
 If unclear:
-1) Measurable number + health word → activity_logging
+1) Measurable number + health word → SPECIFIC activity intent (log_exercise, log_water, etc.)
 2) Emotional language → mood_logging
 3) Asking about progress/status → challenges
 4) Single short reply → clarification
@@ -331,8 +538,14 @@ If unclear:
 User message:
 "{message}"
 
-Respond ONLY with valid JSON matching the required schema.
-Do NOT include explanations.
+CRITICAL: Respond with ONLY valid JSON. No markdown, no code blocks, no explanations.
+Format: {{"primary_intent": "...", "secondary_intent": "...", "confidence": "...", "entities": {{...}}}}
+
+Example valid responses:
+{{"primary_intent": "log_exercise", "secondary_intent": "none", "confidence": "high", "entities": {{"activity_type": "exercise"}}}}
+{{"primary_intent": "log_water", "secondary_intent": "none", "confidence": "high", "entities": {{"activity_type": "water"}}}}
+{{"primary_intent": "activity_query", "secondary_intent": "none", "confidence": "high", "entities": {{}}}}
+{{"primary_intent": "mood_logging", "secondary_intent": "none", "confidence": "high", "entities": {{"mood_emoji": "😟"}}}}
 """
         
         return prompt
@@ -341,7 +554,26 @@ Do NOT include explanations.
         """Fallback keyword-based intent detection with multi-intent support"""
         message_lower = message.lower()
         
-        # Check for activity query patterns FIRST (highest priority)
+        # Check for activity SUMMARY patterns FIRST (viewing logged data)
+        activity_summary_patterns = [
+            'what did i', 'how much did i', 'how many did i', 'did i',
+            'have i logged', 'show me my', 'my activities', 'what have i',
+            'how much water did', 'how many hours did', 'what was my',
+            'my intake', 'my log', 'am i on track', 'how close am i',
+            'did i reach', 'am i meeting'
+        ]
+        
+        has_summary_pattern = any(pattern in message_lower for pattern in activity_summary_patterns)
+        
+        if has_summary_pattern:
+            return {
+                'primary_intent': 'activity_summary',
+                'secondary_intent': 'none',
+                'confidence': 'high',
+                'entities': {}
+            }
+        
+        # Check for activity query patterns (requesting suggestions)
         activity_query_patterns = [
             'suggest', 'recommend', 'tell me about', 'show me', 'what are',
             'activities for', 'activities on', 'help me with', 'what can i do',
@@ -380,6 +612,48 @@ Do NOT include explanations.
                     'entities': {}
                 }
         
+        # Check for SPECIFIC activity logging intents (PRIORITY!)
+        # "I want to log exercise" → log_exercise
+        # "I want log water" → log_water
+        log_intent_patterns = [
+            'i want to log', 'i want log', 'want to log', 'want log',
+            'i want to track', 'i want track', 'want to track', 'want track',
+            'log', 'track', 'record'
+        ]
+        
+        has_log_intent = any(pattern in message_lower for pattern in log_intent_patterns)
+        
+        if has_log_intent:
+            # Check for specific activity types
+            if 'exercise' in message_lower or 'workout' in message_lower:
+                return {
+                    'primary_intent': 'log_exercise',
+                    'secondary_intent': 'none',
+                    'confidence': 'high',
+                    'entities': {'activity_type': 'exercise'}
+                }
+            elif 'water' in message_lower or 'hydration' in message_lower:
+                return {
+                    'primary_intent': 'log_water',
+                    'secondary_intent': 'none',
+                    'confidence': 'high',
+                    'entities': {'activity_type': 'water'}
+                }
+            elif 'sleep' in message_lower or 'rest' in message_lower:
+                return {
+                    'primary_intent': 'log_sleep',
+                    'secondary_intent': 'none',
+                    'confidence': 'high',
+                    'entities': {'activity_type': 'sleep'}
+                }
+            elif 'weight' in message_lower:
+                return {
+                    'primary_intent': 'log_weight',
+                    'secondary_intent': 'none',
+                    'confidence': 'high',
+                    'entities': {'activity_type': 'weight'}
+                }
+        
         # Check for mood keywords
         mood_keywords = [
             'feel', 'feeling', 'mood', 'emotion', 'happy', 'sad',
@@ -389,7 +663,7 @@ Do NOT include explanations.
             'exhausted', 'energetic', 'calm', 'frustrated', 'bored'
         ]
         
-        # Check for activity keywords
+        # Check for activity keywords (for generic activity_logging)
         activity_keywords = [
             'water', 'sleep', 'slept', 'exercise', 'workout', 'weight',
             'drank', 'drink', 'glasses', 'hours', 'minutes', 'kg', 'lbs',
@@ -447,13 +721,43 @@ Do NOT include explanations.
             activity_pos = min([message_lower.find(k) for k in activity_keywords if k in message_lower])
             
             if activity_pos < mood_pos:
-                # Activity mentioned first
-                return {
-                    'primary_intent': self.INTENT_ACTIVITY_LOGGING,
-                    'secondary_intent': self.INTENT_MOOD_LOGGING,
-                    'confidence': 'medium',
-                    'entities': {}
-                }
+                # Activity mentioned first - check for specific type
+                if 'exercise' in message_lower or 'workout' in message_lower:
+                    return {
+                        'primary_intent': self.INTENT_LOG_EXERCISE,
+                        'secondary_intent': self.INTENT_MOOD_LOGGING,
+                        'confidence': 'medium',
+                        'entities': {'activity_type': 'exercise'}
+                    }
+                elif 'water' in message_lower:
+                    return {
+                        'primary_intent': self.INTENT_LOG_WATER,
+                        'secondary_intent': self.INTENT_MOOD_LOGGING,
+                        'confidence': 'medium',
+                        'entities': {'activity_type': 'water'}
+                    }
+                elif 'sleep' in message_lower:
+                    return {
+                        'primary_intent': self.INTENT_LOG_SLEEP,
+                        'secondary_intent': self.INTENT_MOOD_LOGGING,
+                        'confidence': 'medium',
+                        'entities': {'activity_type': 'sleep'}
+                    }
+                elif 'weight' in message_lower:
+                    return {
+                        'primary_intent': self.INTENT_LOG_WEIGHT,
+                        'secondary_intent': self.INTENT_MOOD_LOGGING,
+                        'confidence': 'medium',
+                        'entities': {'activity_type': 'weight'}
+                    }
+                else:
+                    # Generic activity
+                    return {
+                        'primary_intent': self.INTENT_ACTIVITY_LOGGING,
+                        'secondary_intent': self.INTENT_MOOD_LOGGING,
+                        'confidence': 'medium',
+                        'entities': {}
+                    }
             else:
                 # Mood mentioned first
                 return {
@@ -470,12 +774,43 @@ Do NOT include explanations.
                 'entities': {}
             }
         elif has_activity:
-            return {
-                'primary_intent': self.INTENT_ACTIVITY_LOGGING,
-                'secondary_intent': 'none',
-                'confidence': 'high',
-                'entities': {}
-            }
+            # Check for specific activity type
+            if 'exercise' in message_lower or 'workout' in message_lower:
+                return {
+                    'primary_intent': self.INTENT_LOG_EXERCISE,
+                    'secondary_intent': 'none',
+                    'confidence': 'high',
+                    'entities': {'activity_type': 'exercise'}
+                }
+            elif 'water' in message_lower:
+                return {
+                    'primary_intent': self.INTENT_LOG_WATER,
+                    'secondary_intent': 'none',
+                    'confidence': 'high',
+                    'entities': {'activity_type': 'water'}
+                }
+            elif 'sleep' in message_lower:
+                return {
+                    'primary_intent': self.INTENT_LOG_SLEEP,
+                    'secondary_intent': 'none',
+                    'confidence': 'high',
+                    'entities': {'activity_type': 'sleep'}
+                }
+            elif 'weight' in message_lower:
+                return {
+                    'primary_intent': self.INTENT_LOG_WEIGHT,
+                    'secondary_intent': 'none',
+                    'confidence': 'high',
+                    'entities': {'activity_type': 'weight'}
+                }
+            else:
+                # Generic activity
+                return {
+                    'primary_intent': self.INTENT_ACTIVITY_LOGGING,
+                    'secondary_intent': 'none',
+                    'confidence': 'high',
+                    'entities': {}
+                }
         elif is_clarification:
             return {
                 'primary_intent': self.INTENT_CLARIFICATION,

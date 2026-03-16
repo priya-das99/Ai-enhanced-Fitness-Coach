@@ -12,6 +12,8 @@ class HealthActivityLogger:
         'sleep': {'unit': 'hours', 'aliases': ['sleep', 'slept', 'rest', 'nap']},
         'weight': {'unit': 'kg', 'aliases': ['weight', 'weigh']},
         'exercise': {'unit': 'minutes', 'aliases': ['exercise', 'workout', 'gym', 'run', 'walk']},
+        'steps': {'unit': 'steps', 'aliases': ['steps', 'step', 'walking', 'walk']},
+        'calories': {'unit': 'calories', 'aliases': ['calories', 'calorie', 'cals', 'kcals', 'energy']},
         'meal': {'unit': 'servings', 'aliases': ['meal', 'eat', 'ate', 'food', 'breakfast', 'lunch', 'dinner']}
     }
     
@@ -52,6 +54,11 @@ class HealthActivityLogger:
     
     def log_activity(self, user_id, activity_type, value, unit=None, notes=None, custom_timestamp=None):
         """Log a health activity with smart date attribution for sleep and timestamp validation"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"💾 [DATABASE] Saving activity - User: {user_id}, Type: {activity_type}, Value: {value}, Unit: {unit}")
+        
         conn = get_connection()
         cursor = conn.cursor()
         
@@ -102,6 +109,8 @@ class HealthActivityLogger:
         activity_id = cursor.lastrowid
         conn.commit()
         conn.close()
+        
+        logger.info(f"✅ [DATABASE] Activity saved successfully - ID: {activity_id}, Type: {activity_type}, Value: {value} {unit}")
         
         # Update challenge progress
         try:

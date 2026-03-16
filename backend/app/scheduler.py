@@ -6,9 +6,13 @@ from app.services.user_context_service import get_context_service
 from app.services.notification_service import get_notification_service
 from datetime import datetime
 import logging
+import pytz
 
 logger = logging.getLogger(__name__)
-scheduler = AsyncIOScheduler()
+
+# Configure scheduler to use IST (India Standard Time)
+IST = pytz.timezone('Asia/Kolkata')
+scheduler = AsyncIOScheduler(timezone=IST)
 
 # ===== REMINDER JOBS =====
 
@@ -227,6 +231,98 @@ async def token_cleanup_job():
         logger.info("✅ Token cleanup job complete")
     except Exception as e:
         logger.error(f"❌ Token cleanup job failed: {e}")
+
+
+# ===== INSIGHT JOBS (Proactive Engagement) =====
+
+@scheduler.scheduled_job('cron', day_of_week='mon', hour=9, minute=0, id='monday_preventive')
+async def monday_preventive_job():
+    """
+    Monday 9 AM: Send preventive insights for users with Monday stress pattern
+    """
+    logger.info("🕐 Running Monday preventive insights job")
+    
+    try:
+        from app.services.insight_delivery_service import get_insight_delivery_service
+        
+        service = get_insight_delivery_service()
+        result = service.send_monday_preventive_insights()
+        
+        logger.info(f"✅ Monday preventive job complete: {result['sent']}/{result['total']} sent")
+    except Exception as e:
+        logger.error(f"❌ Monday preventive job failed: {e}")
+
+
+@scheduler.scheduled_job('cron', hour=14, minute=55, id='afternoon_energy')
+async def afternoon_energy_job():
+    """
+    Daily 2:55 PM: Send energy boost insights for users with 3 PM fatigue pattern
+    """
+    logger.info("🕐 Running afternoon energy insights job")
+    
+    try:
+        from app.services.insight_delivery_service import get_insight_delivery_service
+        
+        service = get_insight_delivery_service()
+        result = service.send_afternoon_energy_insights()
+        
+        logger.info(f"✅ Afternoon energy job complete: {result['sent']}/{result['total']} sent")
+    except Exception as e:
+        logger.error(f"❌ Afternoon energy job failed: {e}")
+
+
+@scheduler.scheduled_job('cron', hour=10, minute=0, id='pattern_discovery')
+async def pattern_discovery_job():
+    """
+    Daily 10 AM: Notify users about newly discovered patterns
+    """
+    logger.info("🕐 Running pattern discovery insights job")
+    
+    try:
+        from app.services.insight_delivery_service import get_insight_delivery_service
+        
+        service = get_insight_delivery_service()
+        result = service.send_pattern_discovery_insights()
+        
+        logger.info(f"✅ Pattern discovery job complete: {result['sent']}/{result['total']} sent")
+    except Exception as e:
+        logger.error(f"❌ Pattern discovery job failed: {e}")
+
+
+@scheduler.scheduled_job('cron', day_of_week='fri', hour=19, minute=0, id='weekly_summary')
+async def weekly_summary_job():
+    """
+    Friday 7 PM: Send weekly summaries to active users
+    """
+    logger.info("🕐 Running weekly summary insights job")
+    
+    try:
+        from app.services.insight_delivery_service import get_insight_delivery_service
+        
+        service = get_insight_delivery_service()
+        result = service.send_weekly_summaries()
+        
+        logger.info(f"✅ Weekly summary job complete: {result['sent']}/{result['total']} sent")
+    except Exception as e:
+        logger.error(f"❌ Weekly summary job failed: {e}")
+
+
+@scheduler.scheduled_job('cron', hour=12, minute=0, id='mood_followup')
+async def mood_followup_job():
+    """
+    Daily 12 PM: Send follow-up messages for mood improvements or persistent issues
+    """
+    logger.info("🕐 Running mood follow-up insights job")
+    
+    try:
+        from app.services.insight_delivery_service import get_insight_delivery_service
+        
+        service = get_insight_delivery_service()
+        result = service.send_mood_followups()
+        
+        logger.info(f"✅ Mood follow-up job complete: {result['sent']}/{result['total']} sent")
+    except Exception as e:
+        logger.error(f"❌ Mood follow-up job failed: {e}")
 
 
 # ===== SCHEDULER LIFECYCLE =====

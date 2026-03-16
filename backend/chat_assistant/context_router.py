@@ -54,6 +54,13 @@ class ContextRouter:
             logger.info(f"Workflow timeout | user={user_id} | clearing stale workflow")
             state.complete_workflow()
         
+        # Check for explicit context switch first (highest priority)
+        explicit_switch = self._detect_explicit_context_switch(message, state)
+        if explicit_switch:
+            logger.info(f"Explicit context switch detected | user={user_id} | switching to {explicit_switch}")
+            state.complete_workflow()
+            return self._start_workflow_by_name(explicit_switch, state, user_id, message)
+        
         # Detect primary activity intent
         detected_intent = self._detect_primary_activity(message)
         
@@ -273,3 +280,82 @@ class ContextRouter:
             return value is not None
         except:
             return False
+    
+    def _detect_explicit_context_switch(self, message: str, state: WorkflowState) -> Optional[str]:
+        """
+        Detect explicit context switch phrases like:
+        - "Actually, I want to log my mood instead"
+        - "No, I want to log sleep"
+        - "Let me log exercise instead"
+        
+        Returns:
+            Workflow name to switch to, or None
+        """
+        message_lower = message.lower().strip()
+        
+        # Explicit switch indicators
+        switch_indicators = [
+            'actually', 'instead', 'no,', 'wait,', 'let me', 
+            'i want to log', 'i want log', 'change to', 'switch to'
+        ]
+        
+        # Check if message contains switch indicator
+        has_switch_indicator = any(indicator in message_lower for indicator in switch_indicators)
+        
+        if not has_switch_indicator:
+            return None
+        
+        # Map activity keywords to workflow names
+        activity_to_workflow = {
+            'mood': 'mood_logging',
+            'water': 'activity_logging',
+            'sleep': 'activity_logging',
+            'exercise': 'exercise_logging',
+            'weight': 'activity_logging',
+            'steps': 'activity_logging',
+        }
+        
+        # Check which activity is mentioned
+        for activity, workflow in activity_to_workflow.items():
+            if activity in message_lower:
+                logger.info(f"Explicit switch detected: '{message}' → {workflow} ({activity})")
+                return workflow
+        
+        return None
+    
+    def _start_workflow_by_name(self, workflow_name: str, state: WorkflowState, 
+                               user_id: int, message: str) -> WorkflowResponse:
+        """
+        Start a specific workflow by name
+        
+        Args:
+            workflow_name: Name of workflow to start
+            state: Workflow state
+            user_id: User identifier
+            message: Original message
+            
+        Returns:
+            WorkflowResponse from the workflow
+        """
+        try:
+            if workflow_name == 'mood_logging':
+                from .mood_workflow import MoodWorkflow
+                workflow = MoodWorkflow()
+            elif workflow_name == 'exercise_logging':
+                from .activity_workflow import ActivityWorkflow
+                workflow = ActivityWorkflow()
+            else:
+                from .activity_workflow import ActivityWorkflow
+                workflow = ActivityWorkflow()
+            
+            logger.info(f"Starting workflow by name | user={user_id} | workflow={workflow_name}")
+            return workflow.start(message, state, user_id)
+            
+        except Exception as e:
+            logger.error(f"Failed to start workflow {workflow_name}: {e}")
+            return WorkflowResponse(
+                message="Sorry, I couldn't process that. Please try again.",
+                ui_elements=[],
+                completed=True,
+                next_state=ConversationState.LISTENING
+            )

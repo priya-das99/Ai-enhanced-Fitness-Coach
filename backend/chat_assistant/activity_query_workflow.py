@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional, List
 from chat_assistant.workflow_base import BaseWorkflow, WorkflowResponse
 from chat_assistant.smart_suggestions import get_smart_suggestions
 from chat_assistant.context_builder_simple import build_context
-from chat_assistant.unified_state import WorkflowState
+from chat_assistant.unified_state import WorkflowState, ConversationState
 from chat_assistant.llm_service import get_llm_service, LLMUnavailableError, LLMAPIError
 import re
 import logging

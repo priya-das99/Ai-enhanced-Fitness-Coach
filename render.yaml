@@ -1,13 +1,20 @@
 services:
   - type: web
-    name: ai-fitness-coach-mvp
+    name: moodcapture-backend
     env: python
-    buildCommand: "cd backend && pip install -r requirements.txt && python init_db_complete.py"
-    startCommand: "cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT"
-    healthCheckPath: /health
-    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: PYTHONPATH
-        value: /opt/render/project/src/backend
-      - key: OPENAI_API_KEY
-        sync: false  # You'll set this manually in Render dashboard
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: moodcapture-db
+          property: connectionString
+    
+  - type: pserv
+    name: moodcapture-db
+    env: postgresql
+    plan: free
+    databaseName: moodcapture
+    user: moodcapture_user

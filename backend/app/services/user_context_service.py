@@ -57,11 +57,15 @@ class UserContextService:
                 'unit': row['target_unit']
             } for row in cursor.fetchall()}
             
-            # Build summary with defaults
+            # Build summary with defaults - include ALL supported activity types
             summary = {
                 'water': {'value': 0, 'unit': 'glasses', 'target': targets.get('water', {}).get('target', 8)},
                 'sleep': {'value': 0, 'unit': 'hours', 'target': targets.get('sleep', {}).get('target', 8)},
                 'exercise': {'value': 0, 'unit': 'minutes', 'target': targets.get('exercise', {}).get('target', 30)},
+                'weight': {'value': 0, 'unit': 'kg', 'target': targets.get('weight', {}).get('target', 70)},
+                'steps': {'value': 0, 'unit': 'steps', 'target': targets.get('steps', {}).get('target', 10000)},  # Add steps
+                'calories': {'value': 0, 'unit': 'calories', 'target': targets.get('calories', {}).get('target', 2000)},  # Add calories
+                'meal': {'value': 0, 'unit': 'servings', 'target': targets.get('meal', {}).get('target', 3)},  # Add meal
                 'mood': {'emoji': None, 'logged': False},
                 'total_activities': 0
             }
