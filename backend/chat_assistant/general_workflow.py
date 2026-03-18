@@ -116,11 +116,9 @@ class GeneralWorkflow(BaseWorkflow):
         # Safety check first
         safety_response = self._check_safety(message)
         if safety_response:
-            # Return safety response with wellness activity suggestions
+            # Return safety response without UI elements (buttons should persist from initialization)
             return self._complete_workflow(
-                message=safety_response,
-                ui_elements=['activity_buttons'],
-                suggestions=self._get_wellness_suggestions(user_id)
+                message=safety_response
             )
         
         # ===== PHASE 2: DEPTH GUARDRAILS & TEMPLATES =====
@@ -136,9 +134,7 @@ class GeneralWorkflow(BaseWorkflow):
                 logger.info(f"[Phase 2] ✓ Template match! 0 tokens used")
                 # Don't count template responses toward depth
                 return self._complete_workflow(
-                    message=template_response,
-                    ui_elements=['activity_buttons'],
-                    suggestions=self._get_wellness_suggestions(user_id)
+                    message=template_response
                 )
         
         # 3. DISABLED: Depth limit check - let conversations flow naturally
@@ -202,18 +198,10 @@ class GeneralWorkflow(BaseWorkflow):
         # 8. Decide whether to show action buttons based on context
         should_show_buttons = self._should_show_action_buttons(message, is_casual_mention, state)
         
-        if should_show_buttons:
-            # Show wellness activities for engagement (not logging buttons)
-            return self._complete_workflow(
-                message=response_text,
-                ui_elements=['activity_buttons'],
-                suggestions=self._get_wellness_suggestions(user_id)
-            )
-        else:
-            # Just text response, no buttons
-            return self._complete_workflow(
-                message=response_text
-            )
+        # Always just return text response - buttons should persist from initialization
+        return self._complete_workflow(
+            message=response_text
+        )
     
     def _is_casual_mention(self, message: str) -> bool:
         """Check if message is a casual mention vs a question/request"""

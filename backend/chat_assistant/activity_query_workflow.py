@@ -302,7 +302,7 @@ Respond ONLY with valid JSON (no markdown, no code blocks):
         from .unified_state import ConversationState
         return WorkflowResponse(
             message=response_message,
-            ui_elements=['activity_buttons'],
+            ui_elements=[],  # Don't add UI elements - they should persist from initialization
             extra_data={'suggestions': suggestions},
             completed=False,
             next_state=ConversationState.WORKFLOW_ACTIVE

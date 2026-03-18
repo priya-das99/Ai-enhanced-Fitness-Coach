@@ -525,8 +525,9 @@ async function initializeChat() {
         
         const data = await response.json();
         
-        // Only display initial message if it exists and no chat history was loaded
-        if (data.message && (!chatMessages || chatMessages.children.length === 0)) {
+        // Display initial message if it exists
+        // For new users, always show the greeting message
+        if (data.message) {
             addMessage('assistant', data.message);
         }
         
@@ -715,42 +716,41 @@ async function sendMessage(customMessage = null, displayMessage = null) {
 // Update UI elements based on backend response
 function updateUIElements(elements, data = {}) {
     console.log('updateUIElements called with:', elements, data);
+    console.log('Activity options received:', data.activity_options);
     
     // Hide all dynamic UI elements first
     emojiSelector.style.display = 'none';
     skipContainer.style.display = 'none';
     textInputContainer.style.display = 'flex';
     
-    // Remove any existing inline selectors
-    // Activity buttons persist UNLESS we're showing emoji_selector or reason_selector
-    const shouldRemoveActivityButtons = elements.includes('emoji_selector') || elements.includes('reason_selector');
-    
-    const selectorToRemove = shouldRemoveActivityButtons 
-        ? '.inline-emoji-selector, .inline-reason-selector, .inline-action-buttons, .inline-activity-buttons, .inline-generic-buttons'
-        : '.inline-emoji-selector, .inline-reason-selector, .inline-action-buttons';
-    
-    const existingSelectors = document.querySelectorAll(selectorToRemove);
+    // Remove any existing inline selectors - but be more selective
+    // Only remove if they don't have selected buttons (user hasn't made a choice yet)
+    const existingSelectors = document.querySelectorAll('.inline-emoji-selector, .inline-reason-selector, .inline-action-buttons, .inline-activity-buttons, .inline-generic-buttons');
     existingSelectors.forEach(el => {
-        // Don't remove if it contains a selected button (user already made a choice)
         const hasSelectedButton = el.querySelector('.selected');
         if (!hasSelectedButton) {
             el.remove();
         }
     });
     
-    // NEW: Check if elements is an array of button objects (not strings)
+    // Check if elements is an array of button objects (not strings)
     const hasButtonObjects = elements.length > 0 && typeof elements[0] === 'object' && elements[0].type === 'button';
     
     if (hasButtonObjects) {
         // Render generic buttons from backend
         showInlineGenericButtons(elements);
         textInputContainer.style.display = 'none';
-        return; // Don't process other element types
+        return;
     }
     
     // Show requested elements
     if (elements.includes('emoji_selector')) {
-        showInlineEmojiSelector();
+        console.log('Showing emoji selector');
+        // Check if emoji selector already exists and hasn't been used
+        const existingEmojiSelector = document.getElementById('inline-emoji-selector');
+        if (!existingEmojiSelector || !existingEmojiSelector.querySelector('.selected')) {
+            showInlineEmojiSelector();
+        }
         textInputContainer.style.display = 'none';
     }
     
@@ -764,9 +764,7 @@ function updateUIElements(elements, data = {}) {
         textInputContainer.style.display = 'none';
     }
     
-    // NEW: Support for multiple action buttons
     if (elements.includes('action_buttons_multiple') && data.actions) {
-        // Check if these are feedback buttons (simple yes/no/skip style)
         const isFeedbackButtons = data.actions.length === 3 && 
             data.actions.some(a => a.id === 'helpful' || a.id === 'not_helpful' || a.id === 'skip_feedback');
         
@@ -778,26 +776,30 @@ function updateUIElements(elements, data = {}) {
         textInputContainer.style.display = 'none';
     }
     
-    // NEW: Support for activity buttons - handle multiple field names
     if (elements.includes('activity_buttons')) {
-        // Backend might send activity_options, suggestions, activities, or buttons
         const activities = data.activity_options || data.suggestions || data.activities || data.buttons || [];
+        console.log('Processing activity_buttons with', activities.length, 'options:', activities);
         if (activities && activities.length > 0) {
             console.log('Showing activity buttons with options:', activities);
-            showInlineActivityButtons(activities);
-            // Keep text input visible so users can type manually too
+            // Check if activity buttons already exist and are still usable
+            const existingActivityButtons = document.getElementById('latest-activity-buttons');
+            if (!existingActivityButtons) {
+                showInlineActivityButtons(activities);
+            }
             textInputContainer.style.display = 'flex';
         }
     }
     
     // Also check if suggestions are sent directly (for backward compatibility)
-    // BUT: Don't show if emoji_selector or reason_selector is requested
     if (data.suggestions && data.suggestions.length > 0 && 
         !elements.includes('activity_buttons') &&
         !elements.includes('emoji_selector') &&
         !elements.includes('reason_selector')) {
         console.log('Showing suggestions as activity buttons:', data.suggestions);
-        showInlineActivityButtons(data.suggestions);
+        const existingActivityButtons = document.getElementById('latest-activity-buttons');
+        if (!existingActivityButtons) {
+            showInlineActivityButtons(data.suggestions);
+        }
         textInputContainer.style.display = 'flex';
     }
     

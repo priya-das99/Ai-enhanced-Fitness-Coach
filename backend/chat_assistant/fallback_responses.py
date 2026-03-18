@@ -118,7 +118,7 @@ class FallbackResponseGenerator:
             
             return {
                 'message': response_text,
-                'ui_elements': ['activity_buttons'],  # Always show activity buttons
+                'ui_elements': [],  # Don't add UI elements - they should persist from initialization
                 'state': 'idle',
                 'completed': True,
                 'fallback_used': True
@@ -128,7 +128,7 @@ class FallbackResponseGenerator:
             logger.error(f"Error generating fallback response: {e}")
             return {
                 'message': "I'm here to help with your wellness journey. What would you like to do?",
-                'ui_elements': ['activity_buttons'],
+                'ui_elements': [],  # Don't add UI elements - they should persist from initialization
                 'state': 'idle',
                 'completed': True,
                 'fallback_used': True
