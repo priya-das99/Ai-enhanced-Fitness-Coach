@@ -770,6 +770,46 @@ Return ONLY the word: command or conversation
         if response.completed:
             workflow_state.complete_workflow()
             logger.info(f"[Engine] workflow={workflow_name} completed – state reset")
+            
+            # CRITICAL FIX: After workflow completion, restore initial conversation UI elements
+            # if no UI elements were explicitly provided by the workflow
+            if not response.ui_elements or len(response.ui_elements) == 0:
+                try:
+                    from .mood_handler import has_logged_mood_today
+                    
+                    uid = int(user_id)
+                    activity_buttons = [
+                        {"id": "log_water",    "label": "💧 Log Water"},
+                        {"id": "log_sleep",    "label": "😴 Log Sleep"},
+                        {"id": "log_exercise", "label": "🏃 Log Exercise"},
+                        {"id": "log_weight",   "label": "⚖️ Log Weight"},
+                        {"id": "log_steps",    "label": "👟 Log Steps"},
+                        {"id": "log_calories", "label": "🔥 Log Calories"},
+                        {"id": "log_meal",     "label": "🍽️ Log Meal"},
+                        {"id": "log_mood",     "label": "😊 Log Mood"},
+                    ]
+                    
+                    if not has_logged_mood_today(uid):
+                        # Show mood selector + activity buttons WITHOUT Log Mood
+                        result["ui_elements"] = ["emoji_selector", "activity_buttons"]
+                        result["activity_options"] = activity_buttons[:-1]  # exclude log_mood
+                        logger.info(f"[Engine] Added mood selector + activity buttons after workflow completion")
+                    else:
+                        # Mood already logged – show all activity buttons including Log Mood
+                        result["ui_elements"] = ["activity_buttons"]
+                        result["activity_options"] = activity_buttons
+                        logger.info(f"[Engine] Added activity buttons after workflow completion")
+                        
+                except Exception as e:
+                    logger.error(f"[Engine] Failed to add UI elements after workflow completion: {e}")
+                    # Fallback: just show activity buttons
+                    result["ui_elements"] = ["activity_buttons"]
+                    result["activity_options"] = [
+                        {"id": "log_water",    "label": "💧 Log Water"},
+                        {"id": "log_sleep",    "label": "😴 Log Sleep"},
+                        {"id": "log_exercise", "label": "🏃 Log Exercise"},
+                        {"id": "log_mood",     "label": "😊 Log Mood"},
+                    ]
 
         return result
 
