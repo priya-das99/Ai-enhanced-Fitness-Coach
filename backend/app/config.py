@@ -16,8 +16,28 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     
-    # Database
+    # Database - Support both SQLite (local) and PostgreSQL (deployment)
+    DATABASE_URL: str = ""
     DATABASE_PATH: str = os.path.join(os.path.dirname(__file__), '..', 'mood_capture.db')
+    
+    @property
+    def is_postgresql(self) -> bool:
+        """Check if using PostgreSQL database"""
+        return self.DATABASE_URL.startswith('postgresql://') or self.DATABASE_URL.startswith('postgres://')
+    
+    @property
+    def database_config(self) -> dict:
+        """Get database configuration based on environment"""
+        if self.is_postgresql:
+            return {
+                'type': 'postgresql',
+                'url': self.DATABASE_URL
+            }
+        else:
+            return {
+                'type': 'sqlite',
+                'path': self.DATABASE_PATH
+            }
     
     # CORS - Allow local, CodeSandbox, and ngrok domains
     ALLOWED_ORIGINS: str = "http://localhost:8080,http://127.0.0.1:8080,http://localhost:8000,http://127.0.0.1:8000,https://*.codesandbox.io,https://*.csb.app,https://*.ngrok.io,https://*.ngrok-free.app"
