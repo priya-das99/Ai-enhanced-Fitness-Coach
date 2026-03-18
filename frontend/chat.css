@@ -1184,3 +1184,30 @@ button:focus-visible {
     background: transparent;
     padding: 0;
 }
+
+/* Date separator between chat sessions */
+.chat-date-separator {
+    display: flex;
+    align-items: center;
+    text-align: center;
+    margin: 16px 0 8px;
+    gap: 8px;
+}
+
+.chat-date-separator::before,
+.chat-date-separator::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #e0e0e0;
+}
+
+.chat-date-separator span {
+    font-size: 11px;
+    color: #999;
+    background: #fff;
+    padding: 2px 10px;
+    border-radius: 10px;
+    border: 1px solid #e0e0e0;
+    white-space: nowrap;
+}

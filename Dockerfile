@@ -16,8 +16,11 @@ COPY backend/ .
 # Create necessary directories
 RUN mkdir -p /app/data
 
+# Make scripts executable
+RUN chmod +x run_migrations.py start.sh
+
 # Expose port
 EXPOSE 8000
 
-# Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Use startup script that runs migrations first
+CMD ["./start.sh"]

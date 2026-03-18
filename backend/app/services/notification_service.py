@@ -86,16 +86,22 @@ class NotificationService:
             if notification.get('title'):
                 full_message = f"💡 {notification['title']}\n\n{notification['message']}"
             
-            # Insert into chat_messages (using actual schema)
+            # Store action_buttons in metadata so frontend can use them directly
+            metadata = json.dumps({
+                'action_buttons': notification.get('action_buttons', []),
+                'notification_type': notification.get('type', 'reminder'),
+                'title': notification.get('title', '')
+            })
+            
             cursor.execute('''
                 INSERT INTO chat_messages 
-                (user_id, sender, message, timestamp)
-                VALUES (?, ?, ?, ?)
+                (user_id, sender, message, timestamp, metadata)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
             ''', (
                 user_id,
                 'system',
                 full_message,
-                datetime.now()
+                metadata
             ))
     
     def get_unread_notifications(self, user_id: int) -> List[Dict]:

@@ -6,11 +6,9 @@ Allows admins to create challenges and track employee participation
 import sqlite3
 import os
 
-def run_migration():
+def run_migration(cursor):
     """Add challenges tables"""
-    db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'mood_capture.db')
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    conn = cursor.connection
     
     # Challenges table (admin creates these)
     cursor.execute('''
@@ -85,8 +83,7 @@ def run_migration():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_challenges_status ON user_challenges(user_id, status)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_challenge_progress_date ON challenge_progress(user_challenge_id, date)')
     
-    conn.commit()
-    conn.close()
+    # Don't close connection - let migration runner handle it
     print("✓ Migration 003: Challenges system tables created")
 
 if __name__ == '__main__':

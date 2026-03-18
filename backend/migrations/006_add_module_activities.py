@@ -1,9 +1,8 @@
 """Add module-triggering activities (outdoor, 7-minute workout, meditation)"""
 import sqlite3
 
-def upgrade(db_path: str = "mood.db"):
+def upgrade(conn):
     """Add new activities that trigger external modules"""
-    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     try:
@@ -91,7 +90,7 @@ def upgrade(db_path: str = "mood.db"):
                 activity['module_type']
             ))
         
-        conn.commit()
+        # Don't close connection - let migration runner handle it
         print(f"✅ Added {len(new_activities)} module-triggering activities")
         
         # Show summary
@@ -109,8 +108,6 @@ def upgrade(db_path: str = "mood.db"):
         conn.rollback()
         print(f"❌ Error: {e}")
         raise
-    finally:
-        conn.close()
 
 if __name__ == "__main__":
     import sys

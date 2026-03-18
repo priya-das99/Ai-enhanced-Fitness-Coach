@@ -11,11 +11,8 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-def migrate():
+def upgrade(conn):
     """Create suggestion_ranking_context table"""
-    
-    db_path = os.path.join(os.path.dirname(__file__), '..', 'mood_capture.db')
-    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     print("\n" + "="*80)
@@ -59,15 +56,12 @@ def migrate():
         
         print("✓ Created index on user_id and timestamp")
         
-        conn.commit()
+        # Don't close connection - let migration runner handle it
         print("\n✅ Migration 008 completed successfully!\n")
         
     except Exception as e:
         print(f"\n❌ Migration failed: {e}\n")
-        conn.rollback()
         raise
-    finally:
-        conn.close()
 
 if __name__ == "__main__":
     migrate()

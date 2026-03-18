@@ -32,7 +32,10 @@ MOOD_KEYWORDS = [
     "afraid", "confident", "proud", "ashamed", "guilty",
     "relieved", "hopeful", "hopeless", "bored", "motivated",
     "unmotivated", "inspired", "discouraged", "peaceful",
-    "restless", "comfortable", "uncomfortable",
+    "restless", "comfortable", "uncomfortable", "terrible", 
+    "awful", "horrible", "great", "amazing", "fantastic", 
+    "wonderful", "excellent", "good", "bad", "sick", "ill", 
+    "unwell", "well"
 ]
 
 MOOD_PHRASES = [
@@ -305,10 +308,16 @@ Return ONLY the word: command or conversation
             # - Intent gate is disabled
             # - Workflow is waiting for custom input (date, time, duration, etc.)
             # - Workflow is waiting for clarification (asking for specific value)
+            # - It's a mood expression (should be handled by mood workflow)
             # 
             # Check if workflow is awaiting custom input or clarification
             workflow_data = workflow_state.workflow_data or {}
             is_awaiting_input = any(key.startswith('awaiting_') for key in workflow_data.keys())
+            
+            # Check if this is a mood expression (should bypass Intent Gate)
+            is_mood_expression = self._is_mood_expression(msg_lower)
+            if is_mood_expression:
+                logger.info(f"[Route] Mood expression detected: '{message}' - bypassing Intent Gate")
             
             # Check if this is a summary query (should complete active workflow and start fresh)
             summary_query_keywords = [
@@ -354,6 +363,7 @@ Return ONLY the word: command or conversation
                 not is_start_btn and
                 not is_start_content_btn and
                 not is_awaiting_input and
+                not is_mood_expression and  # Skip Intent Gate for mood expressions
                 not is_awaiting_clarification):  # CRITICAL: Skip Intent Gate if workflow is waiting for clarification
                 
                 intent_type = self._classify_intent_type(message)
@@ -387,8 +397,12 @@ Return ONLY the word: command or conversation
                     logger.info("[Intent Gate] ✓ Classified as COMMAND → Continue routing")
             elif is_awaiting_input:
                 logger.info(f"[Intent Gate] ⏭️ Skipping Intent Gate - workflow awaiting custom input")
+            elif is_mood_expression:
+                logger.info(f"[Intent Gate] ⏭️ Skipping Intent Gate - mood expression detected: '{message}'")
             elif is_awaiting_clarification:
                 logger.info(f"[Intent Gate] ⏭️ Skipping Intent Gate - workflow awaiting clarification")
+            else:
+                logger.info(f"[Intent Gate] ⏭️ Skipping Intent Gate - other reason")
             
             # ========================================================== #
             # 2. BUTTON ROUTING (PRIORITY - before context router)
@@ -505,14 +519,21 @@ Return ONLY the word: command or conversation
             # ---------------------------------------------------------- #
             # 7. MOOD EXPRESSION DETECTION (free text, not a button)
             # ---------------------------------------------------------- #
-            # DISABLED: Let general chat handle mood expressions naturally
-            # Only route explicit "log mood" commands
             if not is_log_btn and not is_start_btn and not is_start_content_btn:
+                # Check for explicit mood log commands
                 explicit_mood_log = any(phrase in msg_lower for phrase in ["log mood", "log my mood", "track mood"])
                 if explicit_mood_log:
                     logger.info("[Route] Explicit mood log request → mood workflow")
                     workflow_state.complete_workflow()
                     return self._start_workflow("mood_logging", message, workflow_state, user_id)
+                
+                # Check for mood expressions in natural language
+                if self._is_mood_expression(msg_lower):
+                    logger.info(f"[Route] Mood expression detected: '{message}' → mood workflow")
+                    workflow_state.complete_workflow()
+                    return self._start_workflow("mood_logging", message, workflow_state, user_id)
+                else:
+                    logger.info(f"[Route] Not a mood expression: '{message}'")
 
             # ---------------------------------------------------------- #
             # 8. EXTERNAL / ACTIVITY-START BUTTONS

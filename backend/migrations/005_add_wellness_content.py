@@ -2,9 +2,8 @@
 import sqlite3
 from datetime import datetime
 
-def upgrade(db_path: str):
+def upgrade(conn):
     """Add wellness content tables"""
-    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     try:
@@ -72,15 +71,13 @@ def upgrade(db_path: str):
             )
         """)
         
-        conn.commit()
+        # Don't close connection - let migration runner handle it
         print("✅ Wellness content tables created successfully")
         
     except Exception as e:
         conn.rollback()
         print(f"❌ Error creating tables: {e}")
         raise
-    finally:
-        conn.close()
 
 def seed_initial_data(db_path: str):
     """Seed initial categories"""

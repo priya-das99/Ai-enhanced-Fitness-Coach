@@ -89,6 +89,19 @@ async def startup_event():
         print(f"  ❌ Database initialization failed: {e}")
         logger.error(f"Database initialization failed: {e}")
     
+    # Run migrations
+    try:
+        import sys
+        import os
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        sys.path.insert(0, backend_dir)
+        from run_migrations import run_all_migrations
+        run_all_migrations()
+        print("  ✅ Migrations completed")
+    except Exception as e:
+        print(f"  ❌ Migration failed: {e}")
+        logger.error(f"Migration failed: {e}")
+    
     # Start scheduler for proactive notifications
     try:
         from app.scheduler import start_scheduler, stop_scheduler

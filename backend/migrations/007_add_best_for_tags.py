@@ -21,12 +21,8 @@ def get_db_path():
     
     return 'mood.db'  # Default
 
-def migrate():
+def upgrade(conn):
     """Add best_for column and populate with tags"""
-    db_path = get_db_path()
-    print(f"Using database: {db_path}")
-    
-    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     try:
@@ -86,8 +82,7 @@ def migrate():
         results = cursor.fetchall()
         print(f"✅ {len(results)} activities have best_for tags")
         
-        # Commit changes
-        conn.commit()
+        # Don't close connection - let migration runner handle it
         print("\n✅ Migration completed successfully!")
         
         # Show sample
@@ -128,13 +123,10 @@ def migrate():
                     WHERE suggestion_key = ?
                 """, (tags_json, activity_key))
             
-            conn.commit()
+            # Don't close connection - let migration runner handle it
             print("✅ Tags updated successfully!")
         else:
             raise
-    
-    finally:
-        conn.close()
 
 if __name__ == "__main__":
     print("="*70)

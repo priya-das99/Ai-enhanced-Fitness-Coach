@@ -6,11 +6,9 @@ Stores all chat messages for conversation persistence
 import sqlite3
 import os
 
-def run_migration():
+def run_migration(cursor):
     """Add chat_messages table"""
-    db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'mood.db')
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    conn = cursor.connection
     
     # Create chat_messages table
     cursor.execute('''
@@ -31,8 +29,7 @@ def run_migration():
         ON chat_messages(user_id, timestamp DESC)
     ''')
     
-    conn.commit()
-    conn.close()
+    # Don't close connection - let migration runner handle it
     print("✓ Migration 002: chat_messages table created")
 
 if __name__ == '__main__':

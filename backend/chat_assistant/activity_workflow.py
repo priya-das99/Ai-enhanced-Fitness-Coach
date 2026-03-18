@@ -306,6 +306,16 @@ class ActivityWorkflow(BaseWorkflow):
     def process(self, message: str, state: WorkflowState, user_id: int) -> WorkflowResponse:
         """Process message in active activity workflow"""
         
+        # Check if workflow has been idle too long (5 minutes timeout)
+        if state.is_workflow_stale(timeout_minutes=5):
+            logger.info(f"Activity workflow timed out for user {user_id}, completing workflow")
+            return self._complete_workflow(
+                message="I noticed you haven't responded in a while. Feel free to start logging activities again anytime! 😊"
+            )
+        
+        # Update activity time to prevent timeout
+        state.update_activity_time()
+        
         # NEW: Handle value clarification
         awaiting_value_clarification = state.get_workflow_data('awaiting_value_clarification', False)
         
@@ -372,14 +382,21 @@ class ActivityWorkflow(BaseWorkflow):
                 except Exception as e:
                     logger.warning(f"Failed to publish event: {e}")
                 
-                return self._complete_workflow(
+                # Keep workflow active for follow-ups instead of completing
+                state.set_workflow_data('awaiting_followup', True)
+                state.set_workflow_data('last_logged_activity', activity_type)
+                state.set_workflow_data('last_logged_unit', unit)
+                
+                return WorkflowResponse(
                     message=self._create_activity_response({
                         'activity_type': activity_type,
                         'value': value,
                         'unit': unit,
                         'user_id': user_id
                     }),
-                    ui_elements=[]
+                    ui_elements=[],
+                    completed=False,  # Keep active for follow-ups
+                    next_state=ConversationState.WORKFLOW_ACTIVE
                 )
                 
             except Exception as e:
@@ -463,16 +480,46 @@ class ActivityWorkflow(BaseWorkflow):
             # Check if user wants to log more of the same activity
             message_lower = message.lower().strip()
             
-            # SPECIAL CASE FOR SLEEP: "add X more hours" should be treated as an update, not new entry
-            if last_activity == 'sleep' and any(phrase in message_lower for phrase in ['add', 'more']):
-                # For sleep, "add more" usually means updating the existing entry
-                # Extract the additional amount they want to add
-                additional_value = self.intent_detector.extract_number(message)
+            # Use LLM to understand the follow-up intent with context
+            from .domain.llm.intent_extractor import get_intent_extractor
+            intent_extractor = get_intent_extractor()
+            
+            # Build context for the LLM
+            context = {
+                'active_workflow': 'activity_workflow',
+                'workflow_state': state.state.value,
+                'last_logged_activity': last_activity,
+                'awaiting_followup': True
+            }
+            
+            # Extract intent with context
+            intent_result = intent_extractor.extract_intent(message, context)
+            primary_intent = intent_result.get('primary_intent')
+            entities = intent_result.get('entities', {})
+            
+            logger.info(f"Follow-up intent detected: {primary_intent} with entities: {entities}")
+            
+            # Handle different follow-up intents
+            if primary_intent == f'log_{last_activity}':
+                # User wants to log more of the same activity
+                quantity = entities.get('quantity')
                 
-                if additional_value is not None:
-                    # They want to add X more hours to their existing sleep
-                    # This should trigger duplicate detection logic, not new entry logic
-                    logger.info(f"User wants to add {additional_value} more hours to existing sleep")
+                if quantity is None:
+                    # No quantity detected - ask for clarification
+                    state.set_workflow_data('awaiting_followup', False)
+                    state.set_workflow_data('activity_type', last_activity)
+                    state.set_workflow_data('unit', last_unit)
+                    state.set_workflow_data('notes', f'Follow-up: {message}')
+                    
+                    return self._ask_clarification(
+                        message=f"How much {last_activity} would you like to add?",
+                        ui_elements=['text_input']
+                    )
+                
+                # SPECIAL CASE FOR SLEEP: "add X more hours" should be treated as an update, not new entry
+                if last_activity == 'sleep' and 'add' in message.lower():
+                    # For sleep, "add more" usually means updating the existing entry
+                    logger.info(f"User wants to add {quantity} more hours to existing sleep")
                     
                     # Get the existing sleep value from today
                     from datetime import datetime, timedelta
@@ -488,7 +535,7 @@ class ActivityWorkflow(BaseWorkflow):
                     existing_sleep = self.activity_logger.check_recent_sleep(user_id, target_date)
                     if existing_sleep:
                         # Calculate the new total (existing + additional)
-                        new_total = float(existing_sleep['value']) + additional_value
+                        new_total = float(existing_sleep['value']) + quantity
                         
                         # Set up duplicate confirmation state
                         state.set_workflow_data('awaiting_followup', False)
@@ -512,53 +559,91 @@ class ActivityWorkflow(BaseWorkflow):
                         state.set_workflow_data('notes', f'Follow-up: {message}')
                         
                         return self._ask_clarification(
-                            message=f"I don't see any sleep logged yet today. Do you want to log {additional_value} hours of sleep?",
+                            message=f"I don't see any sleep logged yet today. Do you want to log {quantity} hours of sleep?",
                             ui_elements=['text_input']
                         )
-                else:
-                    # No number detected in "add more" - ask for clarification
-                    state.set_workflow_data('awaiting_followup', False)
-                    state.set_workflow_data('activity_type', last_activity)
-                    state.set_workflow_data('unit', last_unit)
-                    state.set_workflow_data('notes', f'Follow-up: {message}')
-                    
+                
+                # Validate the input
+                validation_result = self.validator.validate_activity_input(last_activity, quantity, user_id)
+                
+                if not validation_result['valid']:
                     return self._ask_clarification(
-                        message=self._get_clarification_message(last_activity),
+                        message=validation_result['message'],
                         ui_elements=['text_input']
                     )
-            
-            if any(phrase in message_lower for phrase in ['log more', 'more', 'add more', 'another', 'again']):
-                # User wants to log more of the same activity (for non-sleep or when no existing entry)
-                logger.info(f"User wants to log more {last_activity}")
                 
-                # Clear follow-up state and restart the same activity workflow
-                state.set_workflow_data('awaiting_followup', False)
-                state.set_workflow_data('activity_type', last_activity)
-                state.set_workflow_data('unit', last_unit)
-                state.set_workflow_data('notes', f'Follow-up: {message}')
+                if validation_result.get('needs_confirmation'):
+                    state.set_workflow_data('pending_value', quantity)
+                    state.set_workflow_data('awaiting_validation_confirmation', True)
+                    state.set_workflow_data('awaiting_followup', False)
+                    
+                    return self._ask_confirmation(
+                        message=validation_result['message'],
+                        ui_elements=['yes_no_buttons']
+                    )
                 
-                return self._ask_clarification(
-                    message=self._get_clarification_message(last_activity),
-                    ui_elements=['text_input']
-                )
+                # Valid input - log it
+                try:
+                    self.activity_logger.log_activity(
+                        user_id=user_id,
+                        activity_type=last_activity,
+                        value=quantity,
+                        unit=last_unit,
+                        notes=f"Follow-up: {message}"
+                    )
+                    
+                    logger.info(f"✅ [ACTIVITY LOGGED] Type: {last_activity} (follow-up), Value: {quantity} {last_unit}, User: {user_id}")
+                    
+                    # Keep workflow active for more follow-ups
+                    return WorkflowResponse(
+                        message=self._create_activity_response({
+                            'activity_type': last_activity,
+                            'value': quantity,
+                            'unit': last_unit,
+                            'user_id': user_id
+                        }),
+                        ui_elements=[],
+                        completed=False,  # Keep active for more follow-ups
+                        next_state=ConversationState.WORKFLOW_ACTIVE
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"Failed to log follow-up activity: {e}")
+                    return self._complete_workflow(
+                        message="Sorry, I couldn't log that activity."
+                    )
             
-            elif any(phrase in message_lower for phrase in ['no', 'done', 'finished', 'that\'s all', 'enough']):
-                # User is done logging
+            elif primary_intent == 'general_chat':
+                # User is done logging or said something like "done", "finished"
                 logger.info(f"User finished logging {last_activity}")
                 return self._complete_workflow(
                     message="Great! Keep up the good work! 💪"
                 )
             
-            else:
-                # User said something else - try to detect if it's a quantity for the same activity
-                value = self.intent_detector.extract_number(message)
+            elif primary_intent.startswith('log_') and primary_intent != f'log_{last_activity}':
+                # User wants to switch to a different activity
+                new_activity = primary_intent.replace('log_', '')
+                logger.info(f"User switching from {last_activity} to {new_activity}")
                 
-                if value is not None:
-                    # User provided a number - assume they want to log more of the same activity
-                    logger.info(f"User provided quantity {value} for follow-up {last_activity}")
+                # Complete current workflow and let the system route to the new activity
+                state.complete_workflow()
+                
+                # Return a response that indicates we're switching
+                return WorkflowResponse(
+                    message=f"Got it! Switching to {new_activity} logging.",
+                    ui_elements=[],
+                    completed=True,
+                    next_state=ConversationState.IDLE
+                )
+            
+            elif primary_intent == 'clarification':
+                # User provided a simple response like a number - treat as quantity for the same activity
+                quantity = entities.get('quantity')
+                if quantity is not None:
+                    logger.info(f"User provided quantity {quantity} for follow-up {last_activity}")
                     
                     # Validate the input
-                    validation_result = self.validator.validate_activity_input(last_activity, value, user_id)
+                    validation_result = self.validator.validate_activity_input(last_activity, quantity, user_id)
                     
                     if not validation_result['valid']:
                         return self._ask_clarification(
@@ -567,7 +652,7 @@ class ActivityWorkflow(BaseWorkflow):
                         )
                     
                     if validation_result.get('needs_confirmation'):
-                        state.set_workflow_data('pending_value', value)
+                        state.set_workflow_data('pending_value', quantity)
                         state.set_workflow_data('awaiting_validation_confirmation', True)
                         state.set_workflow_data('awaiting_followup', False)
                         
@@ -581,18 +666,18 @@ class ActivityWorkflow(BaseWorkflow):
                         self.activity_logger.log_activity(
                             user_id=user_id,
                             activity_type=last_activity,
-                            value=value,
+                            value=quantity,
                             unit=last_unit,
                             notes=f"Follow-up: {message}"
                         )
                         
-                        logger.info(f"✅ [ACTIVITY LOGGED] Type: {last_activity} (follow-up), Value: {value} {last_unit}, User: {user_id}")
+                        logger.info(f"✅ [ACTIVITY LOGGED] Type: {last_activity} (follow-up), Value: {quantity} {last_unit}, User: {user_id}")
                         
                         # Keep workflow active for more follow-ups
                         return WorkflowResponse(
                             message=self._create_activity_response({
                                 'activity_type': last_activity,
-                                'value': value,
+                                'value': quantity,
                                 'unit': last_unit,
                                 'user_id': user_id
                             }),
@@ -606,21 +691,28 @@ class ActivityWorkflow(BaseWorkflow):
                         return self._complete_workflow(
                             message="Sorry, I couldn't log that activity."
                         )
-                
                 else:
-                    # No number detected - complete workflow and let other workflows handle it
-                    logger.info(f"No follow-up detected, completing workflow")
-                    state.complete_workflow()
+                    # No quantity detected - ask for clarification
+                    state.set_workflow_data('awaiting_followup', False)
+                    state.set_workflow_data('activity_type', last_activity)
+                    state.set_workflow_data('unit', last_unit)
+                    state.set_workflow_data('notes', f'Follow-up: {message}')
                     
-                    # Let the message be processed by other workflows
-                    # from .chat_engine_workflow import ChatEngineWorkflow
-                    # chat_engine = ChatEngineWorkflow()
-                    # return chat_engine.start(message, state, user_id)/
-                    return WorkflowResponse(
-                        message="Got it. Let me know if you'd like to track anything else.",
-                        ui_elements=[],
-                        completed=True
+                    return self._ask_clarification(
+                        message=f"How much {last_activity} would you like to add?",
+                        ui_elements=['text_input']
                     )
+            
+            else:
+                # Unclear intent - complete workflow and let other workflows handle it
+                logger.info(f"Unclear follow-up intent: {primary_intent}, completing workflow")
+                state.complete_workflow()
+                
+                return WorkflowResponse(
+                    message="Got it. Let me know if you'd like to track anything else.",
+                    ui_elements=[],
+                    completed=True
+                )
         
         # Check if we're waiting for user to return from external activity
         awaiting_return = state.get_workflow_data('awaiting_return', False)

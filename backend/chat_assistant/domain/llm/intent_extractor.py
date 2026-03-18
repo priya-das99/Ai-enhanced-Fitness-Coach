@@ -143,12 +143,68 @@ class IntentExtractor:
     def _build_prompt(self, message: str, context: Optional[Dict[str, Any]]) -> str:
         """Build strict classification prompt for structured intent extraction"""
         
+        # Build context information
+        context_info = ""
+        if context:
+            active_workflow = context.get('active_workflow')
+            workflow_state = context.get('workflow_state')
+            last_activity = context.get('last_logged_activity')
+            awaiting_followup = context.get('awaiting_followup', False)
+            
+            if active_workflow and awaiting_followup and last_activity:
+                context_info = f"""
+# ============================================================================
+# CURRENT CONTEXT (CRITICAL - CHECK THIS FIRST!)
+# ============================================================================
+
+The user is currently in an active {active_workflow} workflow and just logged: {last_activity}
+The system is awaiting potential follow-up messages.
+
+FOLLOW-UP INTENT RULES:
+- If the message indicates adding/logging more of the same activity → use the SPECIFIC intent for that activity
+- "add 1 more", "2 more", "another", "log more" → continue with {last_activity} logging
+- Numbers alone (like "3", "5") → likely quantities for {last_activity}
+- "done", "finished", "no more", "that's all" → general_chat (ending workflow)
+- Different activity mentioned → switch to that new activity intent
+
+Examples for current context ({last_activity}):
+- "add 1 more" → log_{last_activity} with quantity=1
+- "2 more" → log_{last_activity} with quantity=2  
+- "another glass" → log_{last_activity} with quantity=1
+- "3" → clarification with quantity=3
+- "one more" → log_{last_activity} with quantity=1
+- "log another" → log_{last_activity} with quantity=1
+- "plus 2" → log_{last_activity} with quantity=2
+- "done" → general_chat
+- "finished" → general_chat
+- "log exercise" → log_exercise (switching activities)
+
+CRITICAL: When in follow-up context, prioritize continuation over new intents:
+- Numbers alone (1, 2, 3, etc.) → clarification with quantity
+- "more", "another", "add" + number → log_{last_activity} with quantity
+- "done", "finished", "no more" → general_chat
+- Different activity mentioned → switch to that activity intent
+
+"""
+            elif active_workflow:
+                context_info = f"""
+# ============================================================================
+# CURRENT CONTEXT
+# ============================================================================
+
+The user is currently in an active {active_workflow} workflow.
+Consider this context when classifying the intent.
+
+"""
+        
         prompt = f"""
 You are a strict intent classification engine for a wellness tracking application.
 
 Your task:
 Classify the user message into ONE primary intent and optionally ONE secondary intent.
 You MUST choose only from the allowed intent list.
+
+{context_info}
 
 Allowed primary_intent values:
 - mood_logging

@@ -28,70 +28,39 @@ class DemoReminderScript:
         with get_db() as db:
             cursor = db.cursor()
             
-            # Create demo challenges if they don't exist
             demo_challenges = [
-                {
-                    'title': '7-Day Water Challenge',
-                    'description': 'Drink 8 glasses of water daily for 7 days',
-                    'challenge_type': 'water',
-                    'duration_days': 7,
-                    'points': 50,
-                    'target_value': 8,
-                    'target_unit': 'glasses'
-                },
-                {
-                    'title': '14-Day Exercise Challenge',
-                    'description': 'Exercise for at least 30 minutes daily for 14 days',
-                    'challenge_type': 'exercise',
-                    'duration_days': 14,
-                    'points': 100,
-                    'target_value': 30,
-                    'target_unit': 'minutes'
-                },
-                {
-                    'title': '21-Day Sleep Challenge',
-                    'description': 'Get 8 hours of sleep daily for 21 days',
-                    'challenge_type': 'sleep',
-                    'duration_days': 21,
-                    'points': 150,
-                    'target_value': 8,
-                    'target_unit': 'hours'
-                }
+                ('Water Intake Challenge',    'Drink 8 glasses of water daily for 7 days',       'water',    7,  50,  8,  'glasses'),
+                ('14-Day Exercise Challenge', 'Exercise for at least 30 minutes daily for 14 days','exercise',14, 100, 30, 'minutes'),
+                ('Sleep 8 Hours Challenge',  'Get 8 hours of sleep daily for 21 days',           'sleep',   21, 150,  8, 'hours'),
             ]
             
-            # Insert challenges
-            for challenge in demo_challenges:
+            for title, desc, ctype, days, pts, target, unit in demo_challenges:
+                # Only insert if this challenge_type doesn't already exist
+                cursor.execute('SELECT id FROM challenges WHERE challenge_type = ? AND title = ? LIMIT 1', (ctype, title))
+                row = cursor.fetchone()
+                if not row:
+                    cursor.execute('''
+                        INSERT INTO challenges 
+                        (title, description, challenge_type, duration_days, points, target_value, target_unit, is_active, start_date, end_date)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 1, date('now'), date('now', '+' || ? || ' days'))
+                    ''', (title, desc, ctype, days, pts, target, unit, days))
+            
+            # Enroll user in all three challenge types if not already enrolled
+            for ctype in ('water', 'exercise', 'sleep'):
                 cursor.execute('''
-                    INSERT OR IGNORE INTO challenges 
-                    (title, description, challenge_type, duration_days, points, target_value, target_unit, is_active)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-                ''', (
-                    challenge['title'],
-                    challenge['description'],
-                    challenge['challenge_type'],
-                    challenge['duration_days'],
-                    challenge['points'],
-                    challenge['target_value'],
-                    challenge['target_unit']
-                ))
-            
-            # Join user to water challenge (for demo)
-            cursor.execute('''
-                INSERT OR IGNORE INTO user_challenges (user_id, challenge_id, status, progress, joined_at)
-                SELECT ?, c.id, 'active', 42.8, ?
-                FROM challenges c 
-                WHERE c.challenge_type = 'water'
-                LIMIT 1
-            ''', (user_id, datetime.now() - timedelta(days=3)))
-            
-            # Join user to exercise challenge (for demo)
-            cursor.execute('''
-                INSERT OR IGNORE INTO user_challenges (user_id, challenge_id, status, progress, joined_at)
-                SELECT ?, c.id, 'active', 21.4, ?
-                FROM challenges c 
-                WHERE c.challenge_type = 'exercise'
-                LIMIT 1
-            ''', (user_id, datetime.now() - timedelta(days=1)))
+                    SELECT uc.id FROM user_challenges uc
+                    JOIN challenges c ON uc.challenge_id = c.id
+                    WHERE uc.user_id = ? AND c.challenge_type = ? AND uc.status = 'active'
+                    LIMIT 1
+                ''', (user_id, ctype))
+                if not cursor.fetchone():
+                    cursor.execute('''
+                        INSERT INTO user_challenges (user_id, challenge_id, status, progress, joined_at)
+                        SELECT ?, c.id, 'active', 0, datetime('now', '-1 day')
+                        FROM challenges c 
+                        WHERE c.challenge_type = ? AND c.is_active = 1
+                        LIMIT 1
+                    ''', (user_id, ctype))
             
             db.commit()
             print("✅ Demo challenges setup complete")
@@ -137,12 +106,10 @@ class DemoReminderScript:
         return reminder
     
     def send_challenge_reminder(self, user_id: int = 1):
-        """Send a challenge reminder notification"""
-        # Get user's active challenges
+        """Send a challenge reminder based on user's active challenges and today's activity"""
         challenges = self.challenge_service.get_user_challenges(user_id)
-        
+
         if not challenges:
-            # Send generic challenge invitation
             reminder = {
                 'title': '🎯 Ready for a Challenge?',
                 'message': "Join a wellness challenge to stay motivated and earn points! Challenges help you build healthy habits consistently.",
@@ -154,49 +121,76 @@ class DemoReminderScript:
                 ]
             }
         else:
-            # Send reminder about active challenges
-            challenge = random.choice(challenges)
+            # Pick a challenge the user hasn't logged progress for today
+            pending = self._get_pending_challenges_today(user_id, challenges)
+            challenge = random.choice(pending) if pending else random.choice(challenges)
+
             days_left = challenge['duration_days'] - challenge['days_completed']
             progress_percent = challenge['progress']
-            
-            challenge_reminders = [
+            ctype = challenge['challenge_type']  # water, exercise, sleep, etc.
+
+            # Build type-specific action buttons
+            type_config = {
+                'water':    {'emoji': '💧', 'log_label': '💧 Log Water',    'log_action': 'log_water'},
+                'exercise': {'emoji': '🏃', 'log_label': '🏃 Log Exercise', 'log_action': 'log_exercise'},
+                'sleep':    {'emoji': '😴', 'log_label': '😴 Log Sleep',    'log_action': 'log_sleep'},
+                'mood':     {'emoji': '😊', 'log_label': '😊 Log Mood',     'log_action': 'log_mood'},
+            }
+            cfg = type_config.get(ctype, {'emoji': '💪', 'log_label': '✅ Log Activity', 'log_action': f'log_{ctype}'})
+
+            templates = [
                 {
-                    'title': f"🏆 {challenge['title']} Progress",
-                    'message': f"You're {progress_percent:.1f}% through your {challenge['title']}! {days_left} days remaining. Keep up the great work!",
-                    'type': 'reminder',
-                    'priority': 'normal',
+                    'title': f"{cfg['emoji']} {challenge['title']} — Day Check",
+                    'message': f"You're {progress_percent:.0f}% through your {challenge['title']}! {days_left} day(s) left. Have you logged today's {ctype}?",
                     'action_buttons': [
-                        {'text': '📊 View Progress', 'action': 'view_challenge_progress'},
-                        {'text': '💪 Log Activity', 'action': f"log_{challenge['challenge_type']}"}
+                        {'text': cfg['log_label'],       'action': cfg['log_action']},
+                        {'text': '📊 View Progress',     'action': 'view_challenge_progress'},
                     ]
                 },
                 {
-                    'title': '🔥 Challenge Check-in',
-                    'message': f"How's your {challenge['title']} going? You've completed {challenge['days_completed']} out of {challenge['duration_days']} days. You're doing amazing!",
-                    'type': 'reminder',
-                    'priority': 'normal',
+                    'title': f"🔥 Keep Your Streak — {challenge['title']}",
+                    'message': f"You've completed {challenge['days_completed']} out of {challenge['duration_days']} days. Don't break the streak — log your {ctype} now!",
                     'action_buttons': [
-                        {'text': '✅ Mark Complete', 'action': f"log_{challenge['challenge_type']}"},
-                        {'text': '📈 View Stats', 'action': 'view_challenge_stats'}
+                        {'text': cfg['log_label'],       'action': cfg['log_action']},
+                        {'text': '⏰ Remind Later',      'action': 'snooze_reminder'},
                     ]
                 },
                 {
-                    'title': '🎯 Challenge Motivation',
-                    'message': f"Don't give up on your {challenge['title']}! You're {challenge['days_completed']} days in and earning {challenge['points']} points when you complete it.",
-                    'type': 'reminder',
-                    'priority': 'normal',
+                    'title': f"🏆 {challenge['points']} Points Waiting — {challenge['title']}",
+                    'message': f"You're {progress_percent:.0f}% there! Complete today's {ctype} goal to stay on track and earn your {challenge['points']} point reward.",
                     'action_buttons': [
-                        {'text': '💪 Continue', 'action': f"log_{challenge['challenge_type']}"},
-                        {'text': '🏆 View Rewards', 'action': 'view_points'}
+                        {'text': cfg['log_label'],       'action': cfg['log_action']},
+                        {'text': '📈 View Stats',        'action': 'view_challenge_stats'},
                     ]
-                }
+                },
             ]
-            
-            reminder = random.choice(challenge_reminders)
-        
+
+            chosen = random.choice(templates)
+            reminder = {
+                'title': chosen['title'],
+                'message': chosen['message'],
+                'type': 'reminder',
+                'priority': 'normal',
+                'action_buttons': chosen['action_buttons']
+            }
+
         self.notification_service.send_notification(user_id, reminder)
-        print(f"🎯 Challenge reminder sent to user {user_id}")
+        print(f"🎯 Challenge reminder sent to user {user_id}: {reminder['title']}")
         return reminder
+
+    def _get_pending_challenges_today(self, user_id: int, challenges: list) -> list:
+        """Return challenges where the user hasn't met today's target yet"""
+        from app.repositories.challenge_repository import ChallengeRepository
+        repo = ChallengeRepository()
+        pending = []
+        for ch in challenges:
+            try:
+                progress_today = repo.get_challenge_progress_today(user_id, ch['challenge_type'])
+                if not progress_today or not progress_today.get('target_met'):
+                    pending.append(ch)
+            except Exception:
+                pending.append(ch)
+        return pending
     
     def send_both_reminders(self, user_id: int = 1):
         """Send both water and challenge reminders"""

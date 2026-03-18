@@ -7,8 +7,8 @@ This version assumes a fresh database and just adds new columns and tables.
 import sqlite3
 
 
-def migrate(db_path: str = "mood.db"):
-    conn = sqlite3.connect(db_path)
+def upgrade(conn):
+    """Schema Improvements (Safe Version for Fresh DB)"""
     cursor = conn.cursor()
     
     print("🔧 Starting Schema Improvements Migration (Safe Version)...")
@@ -170,7 +170,7 @@ def migrate(db_path: str = "mood.db"):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_challenges_challenge ON user_challenges(challenge_id)")
     print("✅ Performance indexes created")
     
-    conn.commit()
+    # Don't close connection - let migration runner handle it
     print("\n✅ Migration 004 completed successfully!")
     print("\n📊 Summary of changes:")
     print("  • Added suggestion interaction tracking (rejected, ignored, expired)")
@@ -180,8 +180,6 @@ def migrate(db_path: str = "mood.db"):
     print("  • Created ranking context snapshot tables")
     print("  • Added performance indexes")
     print("  • Enabled foreign key constraints")
-    
-    conn.close()
 
 
 if __name__ == "__main__":

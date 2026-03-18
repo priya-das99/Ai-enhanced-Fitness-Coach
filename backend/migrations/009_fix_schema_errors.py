@@ -11,11 +11,8 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-def migrate():
+def upgrade(conn):
     """Fix all database schema errors"""
-    
-    db_path = os.path.join(os.path.dirname(__file__), '..', 'mood_capture.db')
-    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     print("\n" + "="*80)
@@ -23,17 +20,25 @@ def migrate():
     print("="*80 + "\n")
     
     try:
-        # 1. Fix activities table - add best_for column
+        # 1. Fix activities table - add best_for column (only if table exists)
         print("1. Checking activities table for best_for column...")
-        cursor.execute("PRAGMA table_info(activities)")
-        columns = [col[1] for col in cursor.fetchall()]
+        cursor.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='activities'
+        """)
         
-        if 'best_for' not in columns:
-            print("   Adding best_for column to activities table...")
-            cursor.execute("ALTER TABLE activities ADD COLUMN best_for TEXT")
-            print("   ✓ Added best_for column to activities")
+        if cursor.fetchone():
+            cursor.execute("PRAGMA table_info(activities)")
+            columns = [col[1] for col in cursor.fetchall()]
+            
+            if 'best_for' not in columns:
+                print("   Adding best_for column to activities table...")
+                cursor.execute("ALTER TABLE activities ADD COLUMN best_for TEXT")
+                print("   ✓ Added best_for column to activities")
+            else:
+                print("   ✓ best_for column already exists in activities")
         else:
-            print("   ✓ best_for column already exists in activities")
+            print("   ✓ activities table does not exist (skipping)")
         
         # 2. Fix suggestions table - add best_for column if it exists
         print("\n2. Checking suggestions table for best_for column...")
@@ -115,7 +120,7 @@ def migrate():
         else:
             print("   ✓ smart_suggestions table does not exist (skipping)")
         
-        conn.commit()
+        # Don't close connection - let migration runner handle it
         print("\n✅ Migration 009 completed successfully!")
         print("\nSummary of changes:")
         print("- Added best_for column to activities table (if missing)")
@@ -126,10 +131,7 @@ def migrate():
         
     except Exception as e:
         print(f"\n❌ Migration failed: {e}")
-        conn.rollback()
         raise
-    finally:
-        conn.close()
 
 if __name__ == "__main__":
     migrate()

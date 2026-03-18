@@ -167,12 +167,24 @@ async def get_history(current_user: Dict = Depends(get_current_user)):
 
 @router.get("/messages")
 async def get_chat_messages(
-    limit: int = 50,
+    limit: int = 100,
     current_user: Dict = Depends(get_current_user)
 ):
-    """Get chat message history"""
+    """Get chat message history (all messages, used for history view)"""
     try:
         messages = chat_service.get_chat_messages(current_user['id'], limit)
+        return {"messages": messages}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/messages/current-session")
+async def get_current_session_messages(
+    current_user: Dict = Depends(get_current_user)
+):
+    """Get messages from the current session only (used on chat open)"""
+    try:
+        messages = chat_service.get_current_session_messages(current_user['id'])
         return {"messages": messages}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

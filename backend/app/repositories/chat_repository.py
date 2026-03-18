@@ -62,7 +62,7 @@ class ChatRepository:
             
             return cursor.lastrowid
     
-    def get_recent_messages(self, user_id: int, limit: int = 20) -> List[Dict]:
+    def get_recent_messages(self, user_id: int, limit: int = 100) -> List[Dict]:
         """
         Get recent chat messages for a user
         
@@ -99,6 +99,53 @@ class ChatRepository:
             
             return messages
     
+    def get_current_session_messages(self, user_id: int) -> List[Dict]:
+        """
+        Get messages from the user's current (latest) session only.
+        Falls back to today's messages if no session_id is set.
+        """
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Find the latest session for this user
+            cursor.execute('''
+                SELECT id FROM chat_sessions
+                WHERE user_id = ?
+                ORDER BY session_start DESC
+                LIMIT 1
+            ''', (user_id,))
+            row = cursor.fetchone()
+
+            if row:
+                session_id = row[0]
+                cursor.execute('''
+                    SELECT id, message, sender, timestamp, metadata
+                    FROM chat_messages
+                    WHERE user_id = ? AND session_id = ?
+                    ORDER BY timestamp ASC
+                ''', (user_id, session_id))
+            else:
+                # No session found — fall back to today's messages
+                cursor.execute('''
+                    SELECT id, message, sender, timestamp, metadata
+                    FROM chat_messages
+                    WHERE user_id = ? AND date(timestamp) = date('now')
+                    ORDER BY timestamp ASC
+                ''', (user_id,))
+
+            rows = cursor.fetchall()
+            messages = []
+            for row in rows:
+                metadata = json.loads(row[4]) if row[4] else {}
+                messages.append({
+                    'id': row[0],
+                    'message': row[1],
+                    'sender': row[2],
+                    'timestamp': row[3],
+                    'metadata': metadata
+                })
+            return messages
+
     def get_conversation_context(self, user_id: int, max_messages: int = 10) -> str:
         """
         Get recent conversation as formatted context for LLM

@@ -404,10 +404,10 @@ class MoodWorkflow(BaseWorkflow):
                         return WorkflowResponse(
                             message=f"Here are some activities that might help with {extracted_reason}:",
                             ui_elements=['action_buttons_multiple'],
-                            actions=suggestions,
                             completed=True,  # ✅ Allow secondary workflows to execute
                             next_state=ConversationState.IDLE,
                             extra_data={
+                                'actions': suggestions,
                                 'events': [{'type': 'mood_logged', 'mood': mood_emoji, 'reason': extracted_reason}],
                                 'ranking_context_id': context.get('ranking_context_id')
                             }

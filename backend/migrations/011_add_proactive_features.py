@@ -6,10 +6,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def upgrade(db_path: str):
+def upgrade(conn):
     """Add tables for proactive features"""
     try:
-        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
         # Table 1: Streak Celebrations
@@ -57,14 +56,12 @@ def upgrade(db_path: str):
             ON activity_feedback(completion_id)
         ''')
         
-        conn.commit()
+        # Don't close connection - let migration runner handle it
         logger.info("✅ Migration 011: Added proactive features tables")
         
     except Exception as e:
         logger.error(f"❌ Migration 011 failed: {e}")
         raise
-    finally:
-        conn.close()
 
 def downgrade(db_path: str):
     """Remove proactive features tables"""

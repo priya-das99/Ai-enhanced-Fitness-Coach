@@ -12,9 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from db import get_connection
 
-def migrate():
+def upgrade(conn):
     """Add best_for column to suggestion_master table"""
-    conn = get_connection()
     cursor = conn.cursor()
     
     try:
@@ -34,15 +33,12 @@ def migrate():
             """)
             print("  ✓ Added best_for column")
         
-        conn.commit()
+        # Don't close connection - let migration runner handle it
         print("Migration 010 completed successfully!")
         
     except Exception as e:
         print(f"Migration 010 failed: {e}")
-        conn.rollback()
         raise
-    finally:
-        conn.close()
 
 if __name__ == "__main__":
     migrate()

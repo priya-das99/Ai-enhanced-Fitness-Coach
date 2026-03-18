@@ -228,10 +228,46 @@ function setupDemoReminderButtons() {
                     
                     if (response.ok) {
                         const data = await response.json();
-                        addMessage('system', `✅ ${data.message} Check your chat for the water reminder!`);
-                        // Refresh chat to show the new notification
-                        setTimeout(() => window.location.reload(), 1000);
+                        console.log('💧 Water reminder response:', data);
+                        addMessage('system', `✅ ${data.message}`);
+                        
+                        // Force immediate notification check for new reminders
+                        console.log('🔔 Triggering notification check in 500ms...');
+                        setTimeout(() => {
+                            if (typeof forceNotificationCheck === 'function') {
+                                console.log('🚀 Calling forceNotificationCheck...');
+                                forceNotificationCheck();
+                            } else if (typeof window.forceNotificationCheck === 'function') {
+                                console.log('🚀 Calling window.forceNotificationCheck...');
+                                window.forceNotificationCheck();
+                            } else {
+                                console.error('❌ forceNotificationCheck function not available');
+                                console.log('🔄 Falling back to loadChatHistory...');
+                                // Fallback: reload chat history to show the notification
+                                loadChatHistory();
+                            }
+                        }, 500);
+                        
+                        // ADDITIONAL FIX: Also try to display the notification directly
+                        setTimeout(() => {
+                            console.log('🎯 Direct notification display attempt...');
+                            if (typeof window.displaySystemNotification === 'function') {
+                                const directNotification = {
+                                    id: 'direct-' + Date.now(),
+                                    title: '💧 Hydration Reminder',
+                                    message: "💡 💧 Hydration Reminder\n\nIt's time to drink some water! Stay hydrated for better health and energy.",
+                                    timestamp: new Date().toISOString(),
+                                    action_buttons: [
+                                        { id: 'log_water', label: '💧 Log Water' },
+                                        { id: 'snooze_reminder', label: '⏰ Remind Later' }
+                                    ]
+                                };
+                                window.displaySystemNotification(directNotification);
+                                console.log('✅ Direct notification displayed');
+                            }
+                        }, 1000);
                     } else {
+                        console.error('❌ Water reminder failed:', response.status);
                         addMessage('system', '❌ Failed to send water reminder');
                     }
                 } catch (error) {
@@ -258,10 +294,47 @@ function setupDemoReminderButtons() {
                     
                     if (response.ok) {
                         const data = await response.json();
-                        addMessage('system', `✅ ${data.message} Check your chat for the challenge reminder!`);
-                        // Refresh chat to show the new notification
-                        setTimeout(() => window.location.reload(), 1000);
+                        console.log('🎯 Challenge reminder response:', data);
+                        addMessage('system', `✅ ${data.message}`);
+                        
+                        // Force immediate notification check for new reminders
+                        console.log('🔔 Triggering notification check in 500ms...');
+                        setTimeout(() => {
+                            if (typeof forceNotificationCheck === 'function') {
+                                console.log('🚀 Calling forceNotificationCheck...');
+                                forceNotificationCheck();
+                            } else if (typeof window.forceNotificationCheck === 'function') {
+                                console.log('🚀 Calling window.forceNotificationCheck...');
+                                window.forceNotificationCheck();
+                            } else {
+                                console.error('❌ forceNotificationCheck function not available');
+                                console.log('🔄 Falling back to loadChatHistory...');
+                                // Fallback: reload chat history to show the notification
+                                loadChatHistory();
+                            }
+                        }, 500);
+                        
+                        // ADDITIONAL FIX: Also try to display the notification directly
+                        setTimeout(() => {
+                            console.log('🎯 Direct challenge notification display attempt...');
+                            if (typeof window.displaySystemNotification === 'function') {
+                                const directNotification = {
+                                    id: 'direct-challenge-' + Date.now(),
+                                    title: '🎯 Daily Challenge',
+                                    message: "💡 🎯 Daily Challenge\n\nReady for today's challenge? Complete a 10-minute mindfulness session to boost your focus and well-being!",
+                                    timestamp: new Date().toISOString(),
+                                    action_buttons: [
+                                        { id: 'start_challenge', label: '🚀 Start Challenge' },
+                                        { id: 'view_progress', label: '📊 View Progress' },
+                                        { id: 'snooze_challenge', label: '⏰ Remind Later' }
+                                    ]
+                                };
+                                window.displaySystemNotification(directNotification);
+                                console.log('✅ Direct challenge notification displayed');
+                            }
+                        }, 1000);
                     } else {
+                        console.error('❌ Challenge reminder failed:', response.status);
                         addMessage('system', '❌ Failed to send challenge reminder');
                     }
                 } catch (error) {
@@ -288,9 +361,13 @@ function setupDemoReminderButtons() {
                     
                     if (response.ok) {
                         const data = await response.json();
-                        addMessage('system', `✅ ${data.message} Check your chat for both reminders!`);
-                        // Refresh chat to show the new notifications
-                        setTimeout(() => window.location.reload(), 1000);
+                        addMessage('system', `✅ ${data.message}`);
+                        // Force immediate notification check for new reminders
+                        setTimeout(() => {
+                            if (typeof forceNotificationCheck === 'function') {
+                                forceNotificationCheck();
+                            }
+                        }, 500); // Reduced delay for faster response
                     } else {
                         addMessage('system', '❌ Failed to send reminders');
                     }
@@ -431,6 +508,9 @@ function triggerModule(moduleId, moduleName) {
 // Initialize chat session
 async function initializeChat() {
     try {
+        // Load chat history first
+        await loadChatHistory();
+        
         const response = await fetch(`${API_BASE_URL}/chat/init`, {
             headers: getAuthHeaders()
         });
@@ -445,8 +525,10 @@ async function initializeChat() {
         
         const data = await response.json();
         
-        // Display initial message
-        addMessage('assistant', data.message || data.response);
+        // Only display initial message if it exists and no chat history was loaded
+        if (data.message && (!chatMessages || chatMessages.children.length === 0)) {
+            addMessage('assistant', data.message);
+        }
         
         // Show UI elements based on response
         updateUIElements(data.ui_elements || [], data);
@@ -455,6 +537,85 @@ async function initializeChat() {
         console.error('Error initializing chat:', error);
         addMessage('assistant', 'Hi! I had trouble connecting. Please refresh the page.');
     }
+}
+
+async function loadChatHistory() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/chat/messages?limit=200`, {
+            headers: getAuthHeaders()
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            const messages = data.messages || [];
+            
+            // Clear existing messages
+            if (chatMessages) {
+                chatMessages.innerHTML = '';
+            }
+
+            let lastDateLabel = null;
+
+            // Add messages in chronological order with date separators
+            messages.forEach(msg => {
+                // Inject a date separator when the date changes
+                const msgDate = new Date(msg.timestamp);
+                const dateLabel = formatDateLabel(msgDate);
+                if (dateLabel !== lastDateLabel) {
+                    const sep = document.createElement('div');
+                    sep.className = 'chat-date-separator';
+                    sep.innerHTML = `<span>${dateLabel}</span>`;
+                    chatMessages.appendChild(sep);
+                    lastDateLabel = dateLabel;
+                }
+
+                if (msg.sender === 'system') {
+                    // Only show recent system messages (last 2 minutes) as notifications
+                    const now = new Date();
+                    const diffMinutes = (now - msgDate) / (1000 * 60);
+                    if (diffMinutes <= 2) {
+                        const notification = {
+                            id: msg.id,
+                            title: extractNotificationTitle ? extractNotificationTitle(msg.message) : 'System Notification',
+                            message: msg.message,
+                            timestamp: msg.timestamp,
+                            action_buttons: generateActionButtons ? generateActionButtons(msg.message) : []
+                        };
+                        if (typeof displaySystemNotification === 'function') {
+                            displaySystemNotification(notification);
+                        } else if (typeof window.displaySystemNotification === 'function') {
+                            window.displaySystemNotification(notification);
+                        } else {
+                            addMessage('assistant', msg.message);
+                        }
+                    }
+                } else {
+                    const role = msg.sender === 'user' ? 'user' : 'assistant';
+                    addMessage(role, msg.message);
+                }
+            });
+            
+            // Always land on the latest message
+            scrollToBottom();
+        }
+    } catch (error) {
+        console.error('Error loading chat history:', error);
+    }
+}
+
+function formatDateLabel(date) {
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+
+    const isSameDay = (a, b) =>
+        a.getFullYear() === b.getFullYear() &&
+        a.getMonth() === b.getMonth() &&
+        a.getDate() === b.getDate();
+
+    if (isSameDay(date, today)) return 'Today';
+    if (isSameDay(date, yesterday)) return 'Yesterday';
+    return date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 // Send message
@@ -1205,10 +1366,7 @@ function removeTypingIndicator(id) {
     }
 }
 
-// Scroll to bottom of chat
-function scrollToBottom() {
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
+
 
 
 

@@ -67,14 +67,14 @@ class RankingContextLogger:
         cursor.execute("""
             INSERT INTO suggestion_ranking_context
             (user_id, mood_emoji, reason, ranking_timestamp,
-             ranking_algorithm, total_candidates, context_snapshot)
+             algorithm_name, ranked_suggestions, user_context)
             VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
         """, (
             user_id,
             mood_emoji,
             reason,
             algorithm_name,
-            len(ranked_suggestions),
+            json.dumps(ranked_suggestions),
             json.dumps(user_context)
         ))
         
@@ -222,16 +222,16 @@ class RankingContextLogger:
         
         cursor.execute("""
             SELECT 
-                ranking_algorithm,
+                algorithm_name,
                 COUNT(*) as total_rankings,
                 COUNT(selected_suggestion_key) as selections_made,
                 AVG(selected_rank) as avg_selected_rank,
                 SUM(CASE WHEN selected_rank = 1 THEN 1 ELSE 0 END) * 100.0 / 
                     COUNT(selected_suggestion_key) as rank1_percentage
             FROM suggestion_ranking_context
-            WHERE ranking_algorithm IN (?, ?)
+            WHERE algorithm_name IN (?, ?)
             AND ranking_timestamp >= datetime('now', '-' || ? || ' days')
-            GROUP BY ranking_algorithm
+            GROUP BY algorithm_name
         """, (algo1, algo2, days))
         
         comparison = {}
@@ -289,8 +289,7 @@ class RankingContextLogger:
         # Get context
         cursor.execute("""
             SELECT user_id, mood_emoji, reason, ranking_timestamp,
-                   ranking_algorithm, total_candidates, selected_suggestion_key,
-                   selected_rank, context_snapshot
+                   algorithm_name, ranked_suggestions, user_context
             FROM suggestion_ranking_context
             WHERE id = ?
         """, (ranking_context_id,))
@@ -335,9 +334,7 @@ class RankingContextLogger:
             'reason': context_row[2],
             'timestamp': context_row[3],
             'algorithm': context_row[4],
-            'total_candidates': context_row[5],
-            'selected_suggestion': context_row[6],
-            'selected_rank': context_row[7],
-            'user_context': json.loads(context_row[8]) if context_row[8] else {},
+            'ranked_suggestions': json.loads(context_row[5]) if context_row[5] else [],
+            'user_context': json.loads(context_row[6]) if context_row[6] else {},
             'ranked_suggestions': details
         }

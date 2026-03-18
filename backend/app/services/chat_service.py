@@ -32,36 +32,55 @@ class ChatService:
         # Get or create session
         session_id = self.get_or_create_session(user_id)
         
-        # Check for personalized insights
-        greeting_message = self._get_personalized_greeting(user_id)
+        # Load recent chat history first to check if user has existing conversation
+        chat_history = self.chat_repo.get_recent_messages(user_id, limit=100)
         
-        if greeting_message:
-            # Use insight-based greeting - include ALL fields from greeting
-            response = greeting_message.copy()  # Copy all fields including activity_options
-            # Ensure required fields are present
-            if 'state' not in response:
-                response['state'] = 'idle'
+        # Only generate and save greeting if no chat history exists
+        if not chat_history:
+            # Check for personalized insights
+            greeting_message = self._get_personalized_greeting(user_id)
+            
+            if greeting_message:
+                # Use insight-based greeting - include ALL fields from greeting
+                response = greeting_message.copy()  # Copy all fields including activity_options
+                # Ensure required fields are present
+                if 'state' not in response:
+                    response['state'] = 'idle'
+            else:
+                # Default greeting
+                from chat_assistant.chat_engine_workflow import init_conversation
+                response = init_conversation(user_id)
+            
+            # Save bot's init message with session
+            self.chat_repo.save_message_with_session(
+                user_id=user_id,
+                session_id=session_id,
+                message=response.get('message', ''),
+                sender='bot',
+                metadata={
+                    'ui_elements': response.get('ui_elements', []),
+                    'state': response.get('state', 'idle'),
+                    'insight': response.get('insight')
+                }
+            )
+            
+            # Reload chat history to include the greeting message
+            chat_history = self.chat_repo.get_recent_messages(user_id, limit=100)
         else:
-            # Default greeting
-            from chat_assistant.chat_engine_workflow import init_conversation
-            response = init_conversation(user_id)
-        
-        # Save bot's init message with session
-        self.chat_repo.save_message_with_session(
-            user_id=user_id,
-            session_id=session_id,
-            message=response.get('message', ''),
-            sender='bot',
-            metadata={
-                'ui_elements': response.get('ui_elements', []),
-                'state': response.get('state', 'idle'),
-                'insight': response.get('insight')
+            # User has existing conversation, return minimal response
+            response = {
+                'message': '',  # No greeting message for existing conversations
+                'state': 'idle',
+                'ui_elements': ['activity_buttons'],  # Still show activity buttons
+                'activity_options': [
+                    {'id': 'log_water', 'label': '💧 Log Water'},
+                    {'id': 'log_sleep', 'label': '😴 Log Sleep'},
+                    {'id': 'log_exercise', 'label': '🏃 Log Exercise'},
+                    {'id': 'log_mood', 'label': '😊 Log Mood'}
+                ]
             }
-        )
         
-        # Load recent chat history
-        response['chat_history'] = self.chat_repo.get_recent_messages(user_id, limit=20)
-        
+        response['chat_history'] = chat_history
         return response
     
     def _get_personalized_greeting(self, user_id: int) -> Dict:
@@ -182,6 +201,10 @@ class ChatService:
         from chat_assistant.mood_handler import get_user_mood_logs
         return get_user_mood_logs(user_id)
     
-    def get_chat_messages(self, user_id: int, limit: int = 50) -> List[Dict]:
+    def get_chat_messages(self, user_id: int, limit: int = 100) -> List[Dict]:
         """Get recent chat messages"""
         return self.chat_repo.get_recent_messages(user_id, limit)
+
+    def get_current_session_messages(self, user_id: int) -> List[Dict]:
+        """Get messages from the current (latest) session only"""
+        return self.chat_repo.get_current_session_messages(user_id)

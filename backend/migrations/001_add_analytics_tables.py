@@ -19,11 +19,9 @@ def get_db_path():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_dir, 'mood.db')
 
-def migrate():
+def run_migration(cursor):
     """Run migration"""
-    db_path = get_db_path()
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    conn = cursor.connection
     
     print("Starting migration 001: Add analytics tables...")
     
@@ -129,9 +127,7 @@ def migrate():
             VALUES (?, ?, ?, ?, ?, ?)
         """, suggestion)
     
-    conn.commit()
-    conn.close()
-    
+    # Don't close connection - let migration runner handle it
     print("✅ Migration 001 completed successfully!")
     print("Added tables: analytics_events, user_behavior_metrics, suggestion_master, suggestion_history")
 
