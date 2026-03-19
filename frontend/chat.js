@@ -524,14 +524,17 @@ async function initializeChat() {
         }
         
         const data = await response.json();
+        console.log('🚀 initializeChat received data:', data);
         
         // Display initial message if it exists
         // For new users, always show the greeting message
-        if (data.message) {
+        if (data.message && data.message.trim()) {
+            console.log('📝 Adding greeting message:', data.message);
             addMessage('assistant', data.message);
         }
         
         // Show UI elements based on response
+        console.log('🎛️ Calling updateUIElements with:', data.ui_elements, data);
         updateUIElements(data.ui_elements || [], data);
         
     } catch (error) {
@@ -549,6 +552,26 @@ async function loadChatHistory() {
         if (response.ok) {
             const data = await response.json();
             const messages = data.messages || [];
+            
+            // Store existing UI elements before clearing
+            const existingEmojiSelector = document.querySelector('.inline-emoji-selector');
+            const existingActivityButtons = document.querySelector('.inline-activity-buttons');
+            let savedEmojiSelector = null;
+            let savedActivityButtons = null;
+            
+            if (existingEmojiSelector && !existingEmojiSelector.querySelector('.selected')) {
+                savedEmojiSelector = existingEmojiSelector.cloneNode(true);
+            }
+            if (existingActivityButtons) {
+                savedActivityButtons = existingActivityButtons.cloneNode(true);
+                // Restore click handlers for activity buttons
+                const originalButtons = existingActivityButtons.querySelectorAll('.activity-btn');
+                savedActivityButtons.querySelectorAll('.activity-btn').forEach((btn, index) => {
+                    if (originalButtons[index] && originalButtons[index].onclick) {
+                        btn.onclick = originalButtons[index].onclick;
+                    }
+                });
+            }
             
             // Clear existing messages
             if (chatMessages) {
@@ -595,6 +618,14 @@ async function loadChatHistory() {
                     addMessage(role, msg.message);
                 }
             });
+            
+            // Restore saved UI elements at the end
+            if (savedEmojiSelector) {
+                chatMessages.appendChild(savedEmojiSelector);
+            }
+            if (savedActivityButtons) {
+                chatMessages.appendChild(savedActivityButtons);
+            }
             
             // Always land on the latest message
             scrollToBottom();
@@ -715,21 +746,58 @@ async function sendMessage(customMessage = null, displayMessage = null) {
 
 // Update UI elements based on backend response
 function updateUIElements(elements, data = {}) {
-    console.log('updateUIElements called with:', elements, data);
-    console.log('Activity options received:', data.activity_options);
+    console.log('🎛️ updateUIElements called with:', elements, data);
+    console.log('📋 Activity options received:', data.activity_options);
     
     // Hide all dynamic UI elements first
     emojiSelector.style.display = 'none';
     skipContainer.style.display = 'none';
     textInputContainer.style.display = 'flex';
     
-    // Remove any existing inline selectors - but be more selective
-    // Only remove if they don't have selected buttons (user hasn't made a choice yet)
-    const existingSelectors = document.querySelectorAll('.inline-emoji-selector, .inline-reason-selector, .inline-action-buttons, .inline-activity-buttons, .inline-generic-buttons');
-    existingSelectors.forEach(el => {
+    // Check if this is initialization (both emoji_selector and activity_buttons present)
+    const isInitialization = elements.includes('emoji_selector') && elements.includes('activity_buttons');
+    
+    // For initialization, create sticky UI elements that stay with the greeting
+    if (isInitialization) {
+        console.log('🔄 Initialization detected - creating sticky UI elements');
+        
+        // Remove any existing UI elements first
+        const existingSelectors = document.querySelectorAll('.inline-emoji-selector, .inline-reason-selector, .inline-action-buttons, .inline-activity-buttons, .inline-generic-buttons');
+        existingSelectors.forEach(el => {
+            console.log('🗑️ Removing existing selector:', el.className);
+            el.remove();
+        });
+        
+        // Create sticky emoji selector and activity buttons
+        if (elements.includes('emoji_selector')) {
+            console.log('✨ Creating sticky emoji selector');
+            showInlineEmojiSelector();
+        }
+        
+        if (elements.includes('activity_buttons')) {
+            const activities = data.activity_options || data.suggestions || data.activities || data.buttons || [];
+            if (activities && activities.length > 0) {
+                console.log('✨ Creating sticky activity buttons');
+                showInlineActivityButtons(activities);
+            }
+        }
+        
+        return; // Don't process other elements during initialization
+    }
+    
+    // For non-initialization responses, only handle specific workflow UI elements
+    // Don't touch the sticky emoji selector and activity buttons
+    
+    // Remove only non-sticky UI elements (workflow-specific ones)
+    const workflowSelectors = document.querySelectorAll('.inline-reason-selector, .inline-action-buttons, .inline-generic-buttons');
+    console.log('🧹 Found workflow selectors to potentially remove:', workflowSelectors.length);
+    workflowSelectors.forEach(el => {
         const hasSelectedButton = el.querySelector('.selected');
         if (!hasSelectedButton) {
+            console.log('🗑️ Removing unused workflow selector:', el.className);
             el.remove();
+        } else {
+            console.log('✋ Keeping workflow selector with selected button:', el.className);
         }
     });
     
@@ -737,34 +805,27 @@ function updateUIElements(elements, data = {}) {
     const hasButtonObjects = elements.length > 0 && typeof elements[0] === 'object' && elements[0].type === 'button';
     
     if (hasButtonObjects) {
-        // Render generic buttons from backend
+        console.log('🔘 Showing generic buttons from backend');
         showInlineGenericButtons(elements);
         textInputContainer.style.display = 'none';
         return;
     }
     
-    // Show requested elements
-    if (elements.includes('emoji_selector')) {
-        console.log('Showing emoji selector');
-        // Check if emoji selector already exists and hasn't been used
-        const existingEmojiSelector = document.getElementById('inline-emoji-selector');
-        if (!existingEmojiSelector || !existingEmojiSelector.querySelector('.selected')) {
-            showInlineEmojiSelector();
-        }
-        textInputContainer.style.display = 'none';
-    }
-    
+    // Handle workflow-specific UI elements (not the sticky ones)
     if (elements.includes('reason_selector') && data.reasons) {
+        console.log('🤔 Showing reason selector');
         showInlineReasonSelector(data.reasons);
         textInputContainer.style.display = 'none';
     }
     
     if (elements.includes('action_buttons') && data.action) {
+        console.log('⚡ Showing action buttons');
         showInlineActionButtons(data.action);
         textInputContainer.style.display = 'none';
     }
     
     if (elements.includes('action_buttons_multiple') && data.actions) {
+        console.log('⚡ Showing multiple action buttons');
         const isFeedbackButtons = data.actions.length === 3 && 
             data.actions.some(a => a.id === 'helpful' || a.id === 'not_helpful' || a.id === 'skip_feedback');
         
@@ -776,45 +837,57 @@ function updateUIElements(elements, data = {}) {
         textInputContainer.style.display = 'none';
     }
     
-    if (elements.includes('activity_buttons')) {
+    // Handle standalone emoji_selector (not part of initialization)
+    if (elements.includes('emoji_selector') && !isInitialization) {
+        console.log('😊 Showing standalone emoji selector');
+        const existingEmojiSelector = document.getElementById('inline-emoji-selector');
+        if (!existingEmojiSelector || !existingEmojiSelector.querySelector('.selected')) {
+            showInlineEmojiSelector();
+        }
+        textInputContainer.style.display = 'none';
+    }
+    
+    // Handle standalone activity_buttons (not part of initialization)
+    if (elements.includes('activity_buttons') && !isInitialization) {
+        console.log('🏃 Showing standalone activity buttons');
         const activities = data.activity_options || data.suggestions || data.activities || data.buttons || [];
-        console.log('Processing activity_buttons with', activities.length, 'options:', activities);
         if (activities && activities.length > 0) {
-            console.log('Showing activity buttons with options:', activities);
-            // Check if activity buttons already exist and are still usable
             const existingActivityButtons = document.getElementById('latest-activity-buttons');
             if (!existingActivityButtons) {
                 showInlineActivityButtons(activities);
             }
-            textInputContainer.style.display = 'flex';
         }
+        textInputContainer.style.display = 'flex';
     }
     
-    // Also check if suggestions are sent directly (for backward compatibility)
+    // Handle suggestions sent directly (for backward compatibility)
     if (data.suggestions && data.suggestions.length > 0 && 
         !elements.includes('activity_buttons') &&
         !elements.includes('emoji_selector') &&
         !elements.includes('reason_selector')) {
-        console.log('Showing suggestions as activity buttons:', data.suggestions);
-        const existingActivityButtons = document.getElementById('latest-activity-buttons');
-        if (!existingActivityButtons) {
-            showInlineActivityButtons(data.suggestions);
-        }
+        console.log('📋 Showing suggestions as activity buttons:', data.suggestions);
+        showInlineActivityButtons(data.suggestions);
         textInputContainer.style.display = 'flex';
     }
     
     if (elements.includes('skip_button')) {
+        console.log('⏭️ Showing skip button');
         skipContainer.style.display = 'block';
     }
     
     if (elements.includes('text_input')) {
+        console.log('⌨️ Showing text input');
         textInputContainer.style.display = 'flex';
         messageInput.focus();
     }
+    
+    console.log('✅ updateUIElements completed');
 }
 
 // Show emoji selector inline in the chat messages
 function showInlineEmojiSelector() {
+    console.log('😊 showInlineEmojiSelector called');
+    
     const emojiContainer = document.createElement('div');
     emojiContainer.className = 'message assistant emoji-message inline-emoji-selector';
     emojiContainer.id = 'inline-emoji-selector';
@@ -853,6 +926,7 @@ function showInlineEmojiSelector() {
     
     emojiContainer.appendChild(emojiGrid);
     chatMessages.appendChild(emojiContainer);
+    console.log('✅ Emoji selector added to chat');
     scrollToBottom();
 }
 
@@ -1197,7 +1271,7 @@ function handleActionResponse(response) {
 
 // Show activity buttons inline (NEW!)
 function showInlineActivityButtons(activities) {
-    console.log('showInlineActivityButtons called with:', activities);
+    console.log('🏃 showInlineActivityButtons called with:', activities);
     
     const activityContainer = document.createElement('div');
     activityContainer.className = 'message assistant activity-message inline-activity-buttons';
@@ -1207,7 +1281,7 @@ function showInlineActivityButtons(activities) {
     activityGrid.className = 'activity-grid';
     
     activities.forEach((activity, index) => {
-        console.log(`Processing activity ${index}:`, activity);
+        console.log(`🔍 Processing activity ${index}:`, activity);
         
         const btn = document.createElement('button');
         btn.className = 'activity-btn';
@@ -1218,6 +1292,7 @@ function showInlineActivityButtons(activities) {
         const userMessage = activity.user_message || label;
         
         btn.innerHTML = `<span class="activity-label">${label}</span>`;
+        console.log(`🏷️ Created button: ${label} (ID: ${activityId})`);
         
         btn.onclick = () => {
             // Check if this is a logging button (should be clickable multiple times)
@@ -1318,6 +1393,7 @@ function showInlineActivityButtons(activities) {
     
     activityContainer.appendChild(activityGrid);
     chatMessages.appendChild(activityContainer);
+    console.log('✅ Activity buttons added to chat');
     scrollToBottom();
     
     // Track the location of the latest activity buttons
@@ -1775,3 +1851,5 @@ function showSimpleFeedbackButtons(actions) {
     chatMessages.appendChild(container);
     scrollToBottom();
 }
+
+
