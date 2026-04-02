@@ -1,0 +1,192 @@
+{
+  "timestamp": "2026-03-26T10:36:51.761662",
+  "test_user_id": "999",
+  "tests": [
+    {
+      "test_name": "Log Water",
+      "message": "I drank 3 glasses of water",
+      "description": "Test activity logging workflow with water intake",
+      "success": true,
+      "response_message": "Got it! 3 glasses logged. \ud83d\udca7",
+      "response_state": "idle",
+      "response_completed": false,
+      "ui_elements": [],
+      "modules_used": [
+        "app.repositories",
+        "app.repositories.challenge_repository",
+        "app.repositories.chat_repository",
+        "app.services.behavior_metrics_updater",
+        "app.services.event_publisher",
+        "chat_assistant.context_router",
+        "chat_assistant.enhanced_exercise_detector",
+        "chat_assistant.guardrails"
+      ]
+    },
+    {
+      "test_name": "Log Sleep",
+      "message": "I slept for 7 hours",
+      "description": "Test activity logging workflow with sleep",
+      "success": true,
+      "response_message": "Thanks! 7 hours noted. \ud83d\ude34",
+      "response_state": "idle",
+      "response_completed": false,
+      "ui_elements": [],
+      "modules_used": []
+    },
+    {
+      "test_name": "Log Exercise",
+      "message": "I played badminton for 30 minutes",
+      "description": "Test activity logging workflow with exercise",
+      "success": true,
+      "response_message": "Excellent! 30 minutes is a solid workout. \ud83d\udcaa",
+      "response_state": "idle",
+      "response_completed": false,
+      "ui_elements": [],
+      "modules_used": []
+    },
+    {
+      "test_name": "Log Mood - Negative",
+      "message": "I am feeling stressed",
+      "description": "Test mood logging workflow with negative mood",
+      "success": true,
+      "response_message": "Here are some activities that might help with stress:",
+      "response_state": "idle",
+      "response_completed": true,
+      "ui_elements": [
+        "action_buttons_multiple"
+      ],
+      "modules_used": [
+        "chat_assistant.mood_categories",
+        "chat_assistant.mood_extractor",
+        "chat_assistant.mood_reason_extractor",
+        "chat_assistant.universal_context_handler"
+      ]
+    },
+    {
+      "test_name": "Provide Mood Reason",
+      "message": "work",
+      "description": "Test mood workflow - reason selection",
+      "success": true,
+      "response_message": "Hey there! Looks like work got you busy. If you have a little time, maybe try a quick workout to break up the day\u2014like a 15-minute stretch or some bodyweight exercises to get the blood flowing. How's your energy feeling?",
+      "response_state": "idle",
+      "response_completed": true,
+      "ui_elements": [],
+      "modules_used": [
+        "app.repositories.activity_repository"
+      ]
+    },
+    {
+      "test_name": "Accept Suggestion",
+      "message": "breathing",
+      "description": "Test suggestion acceptance in mood workflow",
+      "success": true,
+      "response_message": "Great choice! Take a few deep breaths and relax. \ud83d\ude0a\n\nHow are you feeling now?",
+      "response_state": "idle",
+      "response_completed": true,
+      "ui_elements": [
+        "emoji_selector"
+      ],
+      "modules_used": []
+    },
+    {
+      "test_name": "Activity Summary",
+      "message": "What did I log today?",
+      "description": "Test activity query workflow",
+      "success": true,
+      "response_message": "\ud83d\udcca Here's your activity summary for today:\n\n\ud83d\udca7 Water: 3/8 glasses\n\ud83c\udfc3 Exercise: 30/30 minutes (Badminton: 30 minutes)\n\ud83d\ude0a Mood: \ud83d\ude1f\n\n\u2728 Total activities logged: 3\n\nGreat job staying on track! \ud83c\udf1f",
+      "response_state": "idle",
+      "response_completed": true,
+      "ui_elements": [],
+      "modules_used": []
+    },
+    {
+      "test_name": "Ask Suggestions",
+      "message": "What can I do to feel better?",
+      "description": "Test general workflow with suggestion request",
+      "success": true,
+      "response_message": "Here are some activities that might help:",
+      "response_state": "workflow_active",
+      "response_completed": false,
+      "ui_elements": [],
+      "modules_used": []
+    },
+    {
+      "test_name": "General Chat",
+      "message": "Is running good for health?",
+      "description": "Test general conversation workflow",
+      "success": true,
+      "response_message": "Here are some activities that might help with exercise:",
+      "response_state": "workflow_active",
+      "response_completed": false,
+      "ui_elements": [],
+      "modules_used": []
+    },
+    {
+      "test_name": "Log Mood - Positive",
+      "message": "I am feeling happy \ud83d\ude0a",
+      "description": "Test mood logging workflow with positive mood",
+      "success": true,
+      "response_message": "Here are some activities that might help with mood:",
+      "response_state": "workflow_active",
+      "response_completed": false,
+      "ui_elements": [],
+      "modules_used": []
+    }
+  ],
+  "imported_modules": [
+    "app.repositories",
+    "app.repositories.activity_repository",
+    "app.repositories.challenge_repository",
+    "app.repositories.chat_repository",
+    "app.services",
+    "app.services.activity_catalog_service",
+    "app.services.behavior_metrics_updater",
+    "app.services.event_publisher",
+    "app.services.ranking_context_logger",
+    "app.services.user_context_service",
+    "chat_assistant",
+    "chat_assistant.action_suggestions",
+    "chat_assistant.activity_extractor",
+    "chat_assistant.activity_intent_detector",
+    "chat_assistant.activity_logging_workflow",
+    "chat_assistant.activity_logging_workflow_wrapper",
+    "chat_assistant.activity_query_workflow",
+    "chat_assistant.activity_summary_workflow",
+    "chat_assistant.activity_validator",
+    "chat_assistant.activity_workflow",
+    "chat_assistant.challenges_workflow",
+    "chat_assistant.chat_engine_workflow",
+    "chat_assistant.content_suggestions",
+    "chat_assistant.context_builder_simple",
+    "chat_assistant.context_detector",
+    "chat_assistant.context_router",
+    "chat_assistant.conversation_depth_tracker",
+    "chat_assistant.domain",
+    "chat_assistant.domain.llm",
+    "chat_assistant.domain.llm.intent_extractor",
+    "chat_assistant.domain.llm.response_phraser",
+    "chat_assistant.domain.llm.suggestion_ranker",
+    "chat_assistant.enhanced_exercise_detector",
+    "chat_assistant.example_workflow",
+    "chat_assistant.general_workflow",
+    "chat_assistant.guardrails",
+    "chat_assistant.health_activity_logger",
+    "chat_assistant.intelligent_suggestions",
+    "chat_assistant.llm_service",
+    "chat_assistant.mood_categories",
+    "chat_assistant.mood_extractor",
+    "chat_assistant.mood_handler",
+    "chat_assistant.mood_reason_extractor",
+    "chat_assistant.mood_workflow",
+    "chat_assistant.response_templates",
+    "chat_assistant.response_validator",
+    "chat_assistant.session_summary",
+    "chat_assistant.smart_suggestions",
+    "chat_assistant.unified_state",
+    "chat_assistant.unit_converter",
+    "chat_assistant.universal_context_handler",
+    "chat_assistant.user_history",
+    "chat_assistant.workflow_base",
+    "chat_assistant.workflow_registry"
+  ]
+}

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fitness Chat Assistant</title>
+    <link rel="stylesheet" href="chat.css?v=2">
+    <link rel="stylesheet" href="system_notifications.css">
+</head>
+
+<body>
+    <!-- Chatbot Widget -->
+    <div class="chatbot-widget">
+        <!-- Chatbot Button -->
+        <button class="chatbot-button" id="chatbotButton">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path
+                    d="M12 2C6.48 2 2 6.48 2 12c0 1.54.36 3 .97 4.29L2 22l5.71-.97C9 21.64 10.46 22 12 22c5.52 0 10-4.48 10-10S17.52 2 12 2zm0 18c-1.38 0-2.68-.31-3.86-.85l-.28-.14-2.86.49.49-2.86-.14-.28C4.31 14.68 4 13.38 4 12c0-4.41 3.59-8 8-8s8 3.59 8 8-3.59 8-8 8zm-4-9h2v2H8v-2zm3 0h2v2h-2v-2zm3 0h2v2h-2v-2z" />
+            </svg>
+            <span class="chatbot-badge" id="chatbotBadge" style="display: none;">1</span>
+        </button>
+
+        <!-- Chat Container -->
+        <div class="chat-container">
+            <!-- Header -->
+            <div class="chat-header">
+                <div class="header-content">
+                    <div>
+                        <h1>💪 Fitness Assistant</h1>
+                        <p class="subtitle">Your personal wellness companion</p>
+                    </div>
+                    <div class="header-buttons">
+                        <button id="minimizeBtn" class="minimize-btn" title="Minimize">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Messages Container -->
+            <div class="chat-messages" id="chatMessages">
+                <!-- Messages will be added here dynamically -->
+            </div>
+
+            <!-- Emoji Selector (hidden - will be shown inline in chat) -->
+            <div class="emoji-selector" id="emojiSelector" style="display: none;">
+                <button class="emoji-btn" data-emoji="😊">😊 Awesome</button>
+                <button class="emoji-btn" data-emoji="🙂">🙂 Pretty Good</button>
+                <button class="emoji-btn" data-emoji="😐">😐 Ok</button>
+                <button class="emoji-btn" data-emoji="😟">😟 Not Good</button>
+                <button class="emoji-btn" data-emoji="😢">😢 Horrible</button>
+            </div>
+
+            <!-- Input Area -->
+            <div class="chat-input-container" id="textInputContainer">
+                <input type="text" id="messageInput" class="chat-input" placeholder="Type your message..."
+                    autocomplete="off">
+                
+                <!-- Demo Controls integrated into input area -->
+                <div class="demo-controls-container" id="demoControlsContainer">
+                    <button id="demoToggleBtn" class="demo-toggle-btn" title="Demo Controls">
+                        🎯
+                        <span class="demo-badge" id="demoBadge" style="display: none;">!</span>
+                    </button>
+                    
+                    <div class="demo-controls-panel" id="demoControlsPanel">
+                        <div class="demo-header">
+                            <h4>🎯 Demo Controls</h4>
+                            <button id="demoMinimizeBtn" class="demo-minimize-btn" title="Minimize">−</button>
+                        </div>
+                        <div class="demo-sections">
+                            <div class="demo-section">
+                                <h5>🧠 AI Insights</h5>
+                                <div class="demo-buttons">
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('day_pattern')">📅 Day Pattern</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('sleep_issue')">😴 Sleep Alert</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('activity_success')">🏃 Activity Success</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('weekly_summary')">📊 Weekly Summary</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('predictive')">🔮 Predictive</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('stress_pattern')">😰 Stress Pattern</button>
+                                </div>
+                            </div>
+                            <div class="demo-section">
+                                <h5>💧 Reminders</h5>
+                                <div class="demo-buttons">
+                                    <button class="demo-btn reminder-btn" onclick="sendDemoReminder('water')">💧 Water Reminder</button>
+                                    <button class="demo-btn reminder-btn" onclick="sendDemoReminder('challenge')">🎯 Challenge Reminder</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <button id="sendButton" class="send-button">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Skip Button (hidden by default) -->
+            <div class="skip-container" id="skipContainer" style="display: none;">
+                <button id="skipButton" class="skip-btn">Skip</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="chat.js?v=fix-mood-routing-2024"></script>
+</body>
+
+</html>
