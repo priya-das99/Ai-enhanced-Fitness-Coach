@@ -41,48 +41,54 @@ class ChallengesWorkflow(BaseWorkflow):
         self._current_user_id = user_id
         
         try:
-            from app.services.user_context_service import get_context_service
-            context_service = get_context_service()
+            from app.services.challenge_service import ChallengeService
+            challenge_service = ChallengeService()
             
-            # Get real-time challenge progress
-            all_progress = context_service.get_all_challenges_progress(user_id)
+            # Get challenge summary using the proper service
+            summary = challenge_service.get_challenges_summary(user_id)
             
-            # Convert to format expected by existing code
-            active = []
-            for p in all_progress:
-                active.append({
-                    'id': p['challenge_id'],
-                    'title': p['challenge_title'],
-                    'challenge_type': p['challenge_type'],
-                    'target_value': p['target'],
-                    'target_unit': p['unit'],
-                    'progress': p['percentage'],
-                    'points': 100,  # Default
-                    'duration_days': 7,  # Default
-                    'days_completed': 0  # Will calculate if needed
-                })
-            
-            # Get available challenges (fallback to empty for now)
-            available = []
-            points = 1032  # From previous data
-            completed = 4  # From previous data
+            active = summary['active_challenges']
+            available = summary['available_challenges']
+            points = summary['total_points']
+            completed = summary['challenges_completed']
             
             # Detect query type
             message_lower = message.lower()
             is_progress_query = any(word in message_lower for word in 
-                                   ['how am i', 'how\'s my', 'my progress', 'doing with', 'status', 'progress'])
+                                   ['how am i', 'how\'s my', 'my progress', 'doing with', 'status', 'progress',
+                                    'how am i doing', 'how are my', 'am i doing'])
             is_specific_challenge = any(word in message_lower for word in
                                        ['meditation', 'steps', 'mood', 'squats', 'sleep', 'meals', 'water', 'hydration'])
             is_list_query = any(word in message_lower for word in
-                               ['what are', 'show', 'list', 'view', 'current', 'my challenges', 'five challenges'])
+                               ['what are', 'show', 'list', 'view', 'current', 'my challenges', 'five challenges',
+                                'do i have', 'have any', 'what challenges', 'any challenges'])
             is_goal_query = any(word in message_lower for word in
                                ['meet my goal', 'did i meet', 'goal', 'complete', 'how many', 'need to'])
             
+            # Debug logging
+            logger.info(f"Challenge query analysis for '{message}':")
+            logger.info(f"  is_progress_query: {is_progress_query}")
+            logger.info(f"  is_list_query: {is_list_query}")
+            logger.info(f"  is_specific_challenge: {is_specific_challenge}")
+            logger.info(f"  is_goal_query: {is_goal_query}")
+            logger.info(f"  active challenges: {len(active)}")
+            logger.info(f"  available challenges: {len(available)}")
+            
             # Build response based on query type - PRIORITIZE SPECIFIC QUERIES
+            logger.info(f"Challenge workflow logic:")
+            logger.info(f"  active challenges: {len(active)}")
+            logger.info(f"  available challenges: {len(available)}")
+            logger.info(f"  is_progress_query: {is_progress_query}")
+            logger.info(f"  is_list_query: {is_list_query}")
+            logger.info(f"  is_specific_challenge: {is_specific_challenge}")
+            logger.info(f"  is_goal_query: {is_goal_query}")
+            
             if not active and not available:
+                logger.info("Branch: no active and no available challenges")
                 message_text = "No challenges available right now. Check back soon! 🎯"
                 buttons = []
             elif is_progress_query:
+                logger.info("Branch: progress query")
                 # User asking about progress - show progress even if no active challenges
                 if active:
                     message_text = self._create_progress_response(active, points, completed)
@@ -96,6 +102,7 @@ class ChallengesWorkflow(BaseWorkflow):
                     else:
                         buttons = []
             elif is_list_query:
+                logger.info("Branch: list query")
                 # User asking to see challenges - show both active and available
                 if active:
                     message_text = self._create_list_response(active, points, completed)
@@ -111,6 +118,7 @@ class ChallengesWorkflow(BaseWorkflow):
                     message_text = "No challenges available right now. Check back soon! 🎯"
                     buttons = []
             elif is_goal_query or is_specific_challenge:
+                logger.info("Branch: goal or specific challenge query")
                 # User asking about specific challenge or goal
                 if active:
                     if is_specific_challenge:
@@ -130,13 +138,18 @@ class ChallengesWorkflow(BaseWorkflow):
                     else:
                         buttons = []
             elif not active:
+                logger.info("Branch: no active challenges - show available")
                 # No specific query and no active challenges - show available
                 message_text = f"You have {len(available)} challenge(s) available to join! Want to take one on? 💪"
                 buttons = self._create_available_challenge_buttons(available[:3])
             else:
+                logger.info("Branch: default - show active challenges")
                 # Default: show active challenges
                 message_text = self._create_list_response(active, points, completed)
                 buttons = self._create_action_buttons_for_pending(active)
+            
+            logger.info(f"Final response: {message_text[:100]}...")
+            logger.info(f"Buttons: {len(buttons)} buttons")
             
             return self._complete_workflow(
                 message=message_text,

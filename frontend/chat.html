@@ -59,6 +59,42 @@
             <div class="chat-input-container" id="textInputContainer">
                 <input type="text" id="messageInput" class="chat-input" placeholder="Type your message..."
                     autocomplete="off">
+                
+                <!-- Demo Controls integrated into input area -->
+                <div class="demo-controls-container" id="demoControlsContainer">
+                    <button id="demoToggleBtn" class="demo-toggle-btn" title="Demo Controls">
+                        🎯
+                        <span class="demo-badge" id="demoBadge" style="display: none;">!</span>
+                    </button>
+                    
+                    <div class="demo-controls-panel" id="demoControlsPanel">
+                        <div class="demo-header">
+                            <h4>🎯 Demo Controls</h4>
+                            <button id="demoMinimizeBtn" class="demo-minimize-btn" title="Minimize">−</button>
+                        </div>
+                        <div class="demo-sections">
+                            <div class="demo-section">
+                                <h5>🧠 AI Insights</h5>
+                                <div class="demo-buttons">
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('day_pattern')">📅 Day Pattern</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('sleep_issue')">😴 Sleep Alert</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('activity_success')">🏃 Activity Success</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('weekly_summary')">📊 Weekly Summary</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('predictive')">🔮 Predictive</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('stress_pattern')">😰 Stress Pattern</button>
+                                </div>
+                            </div>
+                            <div class="demo-section">
+                                <h5>💧 Reminders</h5>
+                                <div class="demo-buttons">
+                                    <button class="demo-btn reminder-btn" onclick="sendDemoReminder('water')">💧 Water Reminder</button>
+                                    <button class="demo-btn reminder-btn" onclick="sendDemoReminder('challenge')">🎯 Challenge Reminder</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
                 <button id="sendButton" class="send-button">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="22" y1="2" x2="11" y2="13"></line>

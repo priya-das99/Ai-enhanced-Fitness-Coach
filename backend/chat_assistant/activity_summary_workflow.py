@@ -40,7 +40,23 @@ class ActivitySummaryWorkflow(BaseWorkflow):
             
             elif self._is_specific_activity_request(message_lower):
                 activity_type = self._extract_activity_type(message_lower)
-                response = self._handle_specific_activity(user_id, activity_type)
+                
+                # Check if this is a specific exercise query (e.g., "Did I go running?")
+                if activity_type == 'exercise':
+                    specific_exercise = self._extract_specific_exercise_from_message(message_lower)
+                    if specific_exercise:
+                        # Handle specific exercise query
+                        result = self._check_specific_exercise_logged(user_id, specific_exercise)
+                        if result['found']:
+                            exercise = result['exercise']
+                            response = f"Yes! You did {exercise['name']} for {exercise['value']:.0f} {exercise['unit']} today! 🏃"
+                        else:
+                            response = f"No, you haven't logged any {specific_exercise} today yet. Want to add it? 🏃"
+                    else:
+                        # General exercise query
+                        response = self._handle_specific_activity(user_id, activity_type)
+                else:
+                    response = self._handle_specific_activity(user_id, activity_type)
             
             elif self._is_progress_request(message_lower):
                 response = self._handle_progress_query(user_id)
@@ -105,8 +121,6 @@ class ActivitySummaryWorkflow(BaseWorkflow):
             return 'weight'
         elif 'mood' in message or 'feeling' in message:
             return 'mood'
-        elif 'steps' in message or 'walking' in message or 'walk' in message:
-            return 'steps'
         elif 'calories' in message or 'calorie' in message or 'energy' in message:
             return 'calories'
         elif 'meal' in message or 'food' in message or 'eat' in message or 'ate' in message or 'nutrition' in message:
@@ -114,7 +128,7 @@ class ActivitySummaryWorkflow(BaseWorkflow):
         elif 'exercise' in message or 'workout' in message or 'gym' in message:
             return 'exercise'
         else:
-            # Check for specific sports and exercise activities
+            # Check for specific sports and exercise activities (including walking)
             exercise_activities = [
                 'badminton', 'tennis', 'football', 'soccer', 'basketball', 'volleyball',
                 'cricket', 'baseball', 'hockey', 'swimming', 'running', 'jogging',
@@ -122,14 +136,79 @@ class ActivitySummaryWorkflow(BaseWorkflow):
                 'martial arts', 'karate', 'judo', 'taekwondo', 'wrestling',
                 'golf', 'bowling', 'ping pong', 'table tennis', 'squash',
                 'climbing', 'hiking', 'cardio', 'strength training',
-                'weightlifting', 'crossfit', 'aerobics', 'zumba', 'spinning'
+                'weightlifting', 'crossfit', 'aerobics', 'zumba', 'spinning',
+                'walking', 'walk'  # FIXED: Walking should be treated as exercise, not steps
             ]
             
             for activity in exercise_activities:
                 if activity in message_lower:
                     return 'exercise'
             
+            # Only treat as steps if explicitly asking about steps
+            if 'steps' in message:
+                return 'steps'
+            
             return 'water'  # Default
+
+    def _extract_specific_exercise_from_message(self, message: str) -> str:
+        """Extract specific exercise name from message for targeted queries"""
+        message_lower = message.lower()
+        
+        # Common exercise activities mapping
+        exercise_mapping = {
+            'running': ['running', 'run', 'jog', 'jogging'],
+            'cycling': ['cycling', 'bike', 'biking', 'bicycle'],
+            'swimming': ['swimming', 'swim'],
+            'walking': ['walking', 'walk', 'walked'],  # Enhanced walking detection
+            'badminton': ['badminton'],
+            'tennis': ['tennis'],
+            'football': ['football', 'soccer'],
+            'basketball': ['basketball'],
+            'volleyball': ['volleyball'],
+            'cricket': ['cricket'],
+            'baseball': ['baseball'],
+            'hockey': ['hockey'],
+            'yoga': ['yoga'],
+            'pilates': ['pilates'],
+            'dancing': ['dancing', 'dance'],
+            'boxing': ['boxing'],
+            'golf': ['golf'],
+            'hiking': ['hiking', 'hike'],
+            'gym': ['gym', 'workout'],
+            'weightlifting': ['weightlifting', 'weights', 'strength training'],
+            'cardio': ['cardio']
+        }
+        
+        for exercise_name, keywords in exercise_mapping.items():
+            for keyword in keywords:
+                if keyword in message_lower:
+                    return exercise_name
+        
+        return None
+
+    def _check_specific_exercise_logged(self, user_id: int, exercise_name: str, target_date: str = None) -> dict:
+        """Check if a specific exercise was logged today"""
+        exercises = self._get_detailed_exercise_records(user_id, target_date)
+        
+        # Enhanced matching for walking/walk queries
+        if exercise_name.lower() in ['walking', 'walk']:
+            for exercise in exercises:
+                exercise_name_lower = exercise['name'].lower()
+                if 'walk' in exercise_name_lower or 'walking' in exercise_name_lower:
+                    return {
+                        'found': True,
+                        'exercise': exercise
+                    }
+        else:
+            # Standard matching for other exercises
+            for exercise in exercises:
+                if exercise_name.lower() in exercise['name'].lower():
+                    return {
+                        'found': True,
+                        'exercise': exercise
+                    }
+        
+        return {'found': False}
     
     def _extract_exercise_name_from_notes(self, notes: str) -> str:
         """Extract exercise name from notes field"""
@@ -170,64 +249,86 @@ class ActivitySummaryWorkflow(BaseWorkflow):
         return ""
 
     def _get_detailed_exercise_records(self, user_id: int, target_date: str = None) -> list:
-        """Get detailed exercise records for today"""
-        from db import get_connection
+        """Get detailed exercise records for today from user_activity_history table"""
+        from app.core.database import get_db
         from datetime import date
         
         if not target_date:
             target_date = date.today().isoformat()
         
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT value, unit, notes, timestamp
-            FROM health_activities
-            WHERE user_id = ? AND activity_type = 'exercise' AND DATE(timestamp) = ?
-            ORDER BY timestamp DESC
-        ''', (user_id, target_date))
-        
-        records = cursor.fetchall()
-        conn.close()
-        
         exercises = []
-        for record in records:
-            value, unit, notes, timestamp = record
+        
+        with get_db() as conn:
+            cursor = conn.cursor()
             
-            # Extract exercise name from notes
-            exercise_name = "exercise"
-            if notes:
-                # Look for patterns like "I played badminton for 30 minutes"
-                import re
-                patterns = [
-                    r'played (\w+)',
-                    r'did (\w+)',
-                    r'went (\w+)',
-                    r'(\w+) for \d+',
-                ]
+            # First, get structured exercise data from user_activity_history table
+            cursor.execute('''
+                SELECT activity_name, duration_minutes, start_time, notes
+                FROM user_activity_history
+                WHERE user_id = ? AND DATE(start_time) = ? AND completed = 1
+                ORDER BY start_time DESC
+            ''', (user_id, target_date))
+            
+            records = cursor.fetchall()
+            
+            for record in records:
+                activity_name, duration_minutes, start_time, notes = record
                 
-                for pattern in patterns:
-                    match = re.search(pattern, notes.lower())
-                    if match:
-                        exercise_name = match.group(1)
-                        break
+                exercises.append({
+                    'name': activity_name.lower(),
+                    'value': duration_minutes,
+                    'unit': 'minutes',
+                    'notes': notes or f"Completed {activity_name} for {duration_minutes} minutes",
+                    'timestamp': start_time
+                })
+            
+            # Also check health_activities table for any exercise entries (fallback)
+            cursor.execute('''
+                SELECT value, unit, notes, timestamp
+                FROM health_activities
+                WHERE user_id = ? AND activity_type = 'exercise' AND DATE(timestamp) = ?
+                ORDER BY timestamp DESC
+            ''', (user_id, target_date))
+            
+            health_records = cursor.fetchall()
+            
+            for record in health_records:
+                value, unit, notes, timestamp = record
                 
-                # If no pattern found, try to extract first meaningful word
-                if exercise_name == "exercise" and notes:
-                    words = notes.lower().split()
-                    exercise_words = ['badminton', 'tennis', 'swimming', 'running', 'cycling', 'yoga', 'gym', 'workout']
-                    for word in words:
-                        if word in exercise_words:
-                            exercise_name = word
+                # Extract exercise name from notes
+                exercise_name = "exercise"
+                if notes:
+                    # Look for patterns like "I played badminton for 30 minutes"
+                    import re
+                    patterns = [
+                        r'played (\w+)',
+                        r'did (\w+)',
+                        r'went (\w+)',
+                        r'(\w+) for \d+',
+                    ]
+                    
+                    for pattern in patterns:
+                        match = re.search(pattern, notes.lower())
+                        if match:
+                            exercise_name = match.group(1)
                             break
-            
-            exercises.append({
-                'name': exercise_name,
-                'value': value,
-                'unit': unit,
-                'notes': notes,
-                'timestamp': timestamp
-            })
+                    
+                    # If no pattern found, try to extract first meaningful word
+                    if exercise_name == "exercise" and notes:
+                        words = notes.lower().split()
+                        exercise_words = ['badminton', 'tennis', 'swimming', 'running', 'cycling', 'yoga', 'gym', 'workout']
+                        for word in words:
+                            if word in exercise_words:
+                                exercise_name = word
+                                break
+                
+                exercises.append({
+                    'name': exercise_name,
+                    'value': value,
+                    'unit': unit,
+                    'notes': notes,
+                    'timestamp': timestamp
+                })
         
         return exercises
     
@@ -266,14 +367,13 @@ class ActivitySummaryWorkflow(BaseWorkflow):
             if detailed_exercises:
                 exercise_details = []
                 for record in detailed_exercises:
-                    notes = record.get('notes', '')
+                    exercise_name = record.get('name', 'exercise')
                     value = record.get('value', 0)
                     unit = record.get('unit', 'minutes')
                     
-                    # Extract exercise name from notes
-                    exercise_name = self._extract_exercise_name_from_notes(notes)
-                    if exercise_name:
-                        exercise_details.append(f"{exercise_name}: {value:.0f} {unit}")
+                    # Use the exercise name directly from the record (already processed in _get_detailed_exercise_records)
+                    if exercise_name and exercise_name != 'exercise':
+                        exercise_details.append(f"{exercise_name.capitalize()}: {value:.0f} {unit}")
                     else:
                         exercise_details.append(f"{value:.0f} {unit}")
                 
@@ -369,7 +469,7 @@ class ActivitySummaryWorkflow(BaseWorkflow):
                 return "You haven't logged your meals today yet. Want to track your nutrition? 🍽️"
         
         else:
-            # Water, sleep, exercise - use challenge progress if available
+            # Water, sleep, exercise - use daily summary FIRST, then challenge progress as fallback
             if activity_type == 'exercise':
                 # Special handling for exercise to show detailed records
                 exercises = self._get_detailed_exercise_records(user_id)
@@ -378,17 +478,17 @@ class ActivitySummaryWorkflow(BaseWorkflow):
                 total_minutes = exercise_data.get('value', 0)
                 target = exercise_data.get('target', 30)
                 
-                if not exercises:
+                if not exercises and total_minutes == 0:
                     return "You haven't logged any exercise today yet. Ready to get moving? 🏃"
                 
                 # Build detailed response
                 if len(exercises) == 1:
                     exercise = exercises[0]
                     if exercise['name'] != 'exercise':
-                        return f"You played {exercise['name']} for {exercise['value']:.0f} {exercise['unit']} today! 🏸 Total exercise: {total_minutes:.0f}/{target} minutes"
+                        return f"You did {exercise['name']} for {exercise['value']:.0f} {exercise['unit']} today! 🏃 Total exercise: {total_minutes:.0f}/{target} minutes"
                     else:
                         return f"You've logged {exercise['value']:.0f} {exercise['unit']} of exercise today! 💪 Total: {total_minutes:.0f}/{target} minutes"
-                else:
+                elif len(exercises) > 1:
                     # Multiple exercises
                     exercise_list = []
                     for exercise in exercises:
@@ -399,42 +499,28 @@ class ActivitySummaryWorkflow(BaseWorkflow):
                     
                     exercises_text = ", ".join(exercise_list)
                     return f"Today you did: {exercises_text}. Total: {total_minutes:.0f}/{target} minutes 🏃"
-            
-            # For other activities (water, sleep), use existing logic
-            progress = self.context_service.get_challenge_progress_today(user_id, activity_type)
-            
-            if not progress:
-                # No active challenge, just show what they logged
-                summary = self.context_service.get_daily_summary(user_id)
-                activity_data = summary.get(activity_type, {})
-                
-                if activity_data.get('value', 0) > 0:
-                    return f"You've logged {activity_data['value']:.1f} {activity_data['unit']} of {activity_type} today! 👍"
                 else:
-                    return f"You haven't logged any {activity_type} today yet."
+                    # No detailed exercises but has total minutes (from health_activities)
+                    return f"You've logged {total_minutes:.0f} minutes of exercise today! 💪 Target: {target} minutes"
             
-            # Has active challenge
-            current = progress['current']
-            target = progress['target']
-            unit = progress['unit']
-            remaining = progress['remaining']
-            percentage = progress['percentage']
+            # For other activities (water, sleep), use daily summary FIRST, then challenge progress as fallback
+            summary = self.context_service.get_daily_summary(user_id)
+            activity_data = summary.get(activity_type, {})
             
-            if progress['completed']:
-                return (f"🎉 Yes! You've completed your {activity_type} goal for today!\n\n"
-                       f"Target: {target} {unit} | Completed: {current} {unit}\n\n"
-                       f"Great job! Keep up the momentum! 💪")
-            
-            elif current == 0:
-                return (f"You haven't logged any {activity_type} today yet.\n\n"
-                       f"Your goal: {target} {unit}\n\n"
-                       f"Let's get started! 🚀")
-            
+            # FIXED: Always use daily summary data first - it's the source of truth
+            if activity_data.get('value', 0) > 0:
+                # User has logged this activity - show the actual logged amount from daily summary
+                value = activity_data['value']
+                unit = activity_data['unit']
+                target = activity_data.get('target', 0)
+                
+                if target > 0:
+                    return f"You've logged {value:.1f}/{target:.0f} {unit} of {activity_type} today! 👍"
+                else:
+                    return f"You've logged {value:.1f} {unit} of {activity_type} today! 👍"
             else:
-                return (f"You're making progress on {activity_type}! 📈\n\n"
-                       f"Today: {current}/{target} {unit} ({percentage:.0f}%)\n"
-                       f"Remaining: {remaining} {unit}\n\n"
-                       f"You've got this! 🔥")
+                # User hasn't logged this activity according to daily summary
+                return f"You haven't logged any {activity_type} today yet."
     
     def _handle_progress_query(self, user_id: int) -> str:
         """Handle general progress query"""

@@ -48,6 +48,191 @@ class ActivityWorkflow(BaseWorkflow):
         self.activity_logger = HealthActivityLogger()
         self.validator = ActivityValidator()
     
+    def _process_multiple_activities(self, activities: list, state: WorkflowState, user_id: int, original_message: str) -> WorkflowResponse:
+        """
+        Process multiple activities detected in a single message
+        
+        Args:
+            activities: List of detected activities
+            state: Current workflow state
+            user_id: User ID
+            original_message: Original user message
+            
+        Returns:
+            WorkflowResponse with results of all activities logged
+        """
+        logger.info(f"🔄 [MULTIPLE ACTIVITIES] Starting to process {len(activities)} activities")
+        
+        logged_activities = []
+        failed_activities = []
+        validation_issues = []
+        
+        for i, activity in enumerate(activities):
+            logger.info(f"🔍 [ACTIVITY {i+1}/{len(activities)}] Processing: {activity.get('activity_name', activity['activity_type'])} - {activity.get('value')} {activity.get('unit')}")
+            
+            # Skip activities that need clarification (incomplete data)
+            if activity.get('needs_value_clarification') or activity.get('needs_unit_clarification'):
+                logger.info(f"⚠️ [ACTIVITY {i+1}] Skipping - needs clarification")
+                validation_issues.append({
+                    'activity': activity,
+                    'issue': 'needs_clarification'
+                })
+                continue
+            
+            # Skip sleep duplicate checking for multiple activities (too complex for batch processing)
+            # Individual sleep logging will still have duplicate checking
+            
+            # Validate activity
+            validation_result = self.validator.validate_activity_input(
+                activity['activity_type'], 
+                activity['value'], 
+                user_id
+            )
+            
+            if not validation_result['valid']:
+                logger.info(f"❌ [ACTIVITY {i+1}] Validation failed: {validation_result['message']}")
+                validation_issues.append({
+                    'activity': activity,
+                    'issue': 'validation_failed',
+                    'message': validation_result['message']
+                })
+                continue
+            
+            if validation_result.get('needs_confirmation'):
+                logger.info(f"⚠️ [ACTIVITY {i+1}] Needs confirmation - skipping for batch processing")
+                validation_issues.append({
+                    'activity': activity,
+                    'issue': 'needs_confirmation',
+                    'message': validation_result['message']
+                })
+                continue
+            
+            # Log the activity
+            try:
+                self.activity_logger.log_activity(
+                    user_id=user_id,
+                    activity_type=activity['activity_type'],
+                    value=activity['value'],
+                    unit=activity['unit'],
+                    notes=activity.get('notes', original_message)
+                )
+                
+                logger.info(f"✅ [ACTIVITY {i+1}] Logged successfully: {activity['activity_type']} - {activity['value']} {activity['unit']}")
+                
+                logged_activities.append(activity)
+                
+                # Publish events for each activity
+                try:
+                    from app.services.event_publisher import get_event_publisher
+                    publisher = get_event_publisher()
+                    publisher.publish_activity_logged(
+                        user_id=str(user_id),
+                        activity_type=activity['activity_type'],
+                        value=activity['value'],
+                        unit=activity['unit']
+                    )
+                    logger.info(f"📊 [ACTIVITY {i+1}] Published event for {activity['activity_type']}")
+                except Exception as e:
+                    logger.warning(f"Failed to publish event for activity {i+1}: {e}")
+                
+            except Exception as e:
+                logger.error(f"❌ [ACTIVITY {i+1}] Failed to log: {e}")
+                failed_activities.append({
+                    'activity': activity,
+                    'error': str(e)
+                })
+        
+        # Update behavior metrics once for all activities
+        try:
+            from app.services.behavior_metrics_updater import get_metrics_updater
+            updater = get_metrics_updater()
+            updater.update_metrics(str(user_id))
+            logger.info(f"📊 Updated behavior metrics for user {user_id} after multiple activities")
+        except Exception as e:
+            logger.warning(f"Failed to update behavior metrics: {e}")
+        
+        # Create response based on results
+        return self._create_multiple_activities_response(
+            logged_activities, 
+            failed_activities, 
+            validation_issues, 
+            user_id
+        )
+    
+    def _create_multiple_activities_response(self, logged_activities: list, failed_activities: list, validation_issues: list, user_id: int) -> WorkflowResponse:
+        """
+        Create response message for multiple activities processing
+        
+        Args:
+            logged_activities: Successfully logged activities
+            failed_activities: Activities that failed to log
+            validation_issues: Activities with validation issues
+            user_id: User ID
+            
+        Returns:
+            WorkflowResponse with appropriate message and UI elements
+        """
+        messages = []
+        
+        # Success message for logged activities
+        if logged_activities:
+            if len(logged_activities) == 1:
+                activity = logged_activities[0]
+                activity_name = activity.get('activity_name', activity['activity_type'])
+                messages.append(f"✅ Logged {activity_name}: {activity['value']} {activity['unit']}")
+            else:
+                messages.append(f"✅ Successfully logged {len(logged_activities)} activities:")
+                for activity in logged_activities:
+                    activity_name = activity.get('activity_name', activity['activity_type'])
+                    messages.append(f"   • {activity_name}: {activity['value']} {activity['unit']}")
+        
+        # Add total exercise time if multiple exercises were logged
+        exercise_activities = [a for a in logged_activities if a['activity_type'] == 'exercise']
+        if len(exercise_activities) > 1:
+            total_minutes = sum(a['value'] for a in exercise_activities if a['unit'] == 'minutes')
+            if total_minutes > 0:
+                messages.append(f"🏃 Total exercise time: {total_minutes} minutes")
+        
+        # Warning messages for issues
+        if validation_issues:
+            messages.append(f"\n⚠️ {len(validation_issues)} activities need attention:")
+            for issue in validation_issues[:3]:  # Show max 3 issues
+                activity = issue['activity']
+                activity_name = activity.get('activity_name', activity['activity_type'])
+                if issue['issue'] == 'needs_clarification':
+                    messages.append(f"   • {activity_name}: needs more details")
+                elif issue['issue'] == 'validation_failed':
+                    messages.append(f"   • {activity_name}: {issue['message']}")
+                elif issue['issue'] == 'needs_confirmation':
+                    messages.append(f"   • {activity_name}: unusual value needs confirmation")
+        
+        # Error messages for failed activities
+        if failed_activities:
+            messages.append(f"\n❌ {len(failed_activities)} activities couldn't be logged")
+        
+        # Add motivational message
+        if logged_activities:
+            if len(logged_activities) >= 3:
+                messages.append("\n🔥 Amazing! You're really active today! Keep it up! 💪")
+            elif len(logged_activities) == 2:
+                messages.append("\n💪 Great job logging multiple activities! You're doing awesome!")
+            else:
+                messages.append("\n👍 Nice work! Keep tracking your activities!")
+        
+        final_message = "\n".join(messages)
+        
+        # Determine UI elements
+        ui_elements = []
+        
+        # If there were validation issues, don't show additional UI to keep it clean
+        # User can manually log the problematic activities if needed
+        
+        # Complete workflow since we've processed all we can
+        return self._complete_workflow(
+            message=final_message,
+            ui_elements=ui_elements
+        )
+
     def start(self, message: str, state: WorkflowState, user_id: int) -> WorkflowResponse:
         """Start activity logging workflow"""
         logger.info(f"🔵 [ACTIVITY WORKFLOW START] User: {user_id}, Message: '{message}', Message type: {type(message)}, Length: {len(message)}")
@@ -102,7 +287,12 @@ class ActivityWorkflow(BaseWorkflow):
                 message="I can help log activities like water, sleep, exercise, or weight."
             )
         
-        # Process first activity (sequential, not parallel)
+        # NEW: Handle multiple activities if detected
+        if len(activities) > 1:
+            logger.info(f"🔄 [MULTIPLE ACTIVITIES] Processing {len(activities)} activities sequentially")
+            return self._process_multiple_activities(activities, state, user_id, message)
+        
+        # Process single activity (existing logic preserved)
         activity = activities[0]
         
         # CRITICAL FIX: Handle missing value clarification

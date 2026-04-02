@@ -33,6 +33,11 @@ let lastActivityButtonsLocation = null;
 document.addEventListener('DOMContentLoaded', async () => {
     await checkAuth();
     updateNavigation();
+    
+    // Initialize demo controls for all users (but only functional for authenticated users)
+    initializeDemoControls();
+    console.log('🎯 Demo Mode: Press Ctrl+Shift+D to activate demo controls');
+    
     if (currentUser) {
         initializeChat();
         setupEventListeners();
@@ -122,10 +127,7 @@ async function checkAuth() {
             currentUser = data;
             
             // Update chat header with user info
-            const subtitle = document.querySelector('.subtitle');
-            if (subtitle) {
-                subtitle.textContent = `Welcome, ${currentUser.full_name || currentUser.username}!`;
-            }
+            updateChatHeader();
         } else {
             // Token invalid or expired
             localStorage.removeItem('token');
@@ -137,6 +139,16 @@ async function checkAuth() {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
         currentUser = null;
+    }
+}
+
+// Update chat header with user information
+function updateChatHeader() {
+    const subtitle = document.querySelector('.subtitle');
+    if (subtitle && currentUser) {
+        subtitle.textContent = `Welcome, ${currentUser.full_name || currentUser.username}!`;
+    } else if (subtitle) {
+        subtitle.textContent = 'Your personal wellness companion';
     }
 }
 
@@ -200,198 +212,11 @@ function setupEventListeners() {
     }
 }
 
-// Setup demo reminder buttons
+// Setup demo reminder buttons - Now using expandable demo controls
 function setupDemoReminderButtons() {
-    const demoContainer = document.getElementById('demoReminderContainer');
-    const waterBtn = document.getElementById('sendWaterReminderBtn');
-    const challengeBtn = document.getElementById('sendChallengeReminderBtn');
-    const bothBtn = document.getElementById('sendBothRemindersBtn');
-    const toggleBtn = document.getElementById('toggleDemoBtn');
-    
-    if (!demoContainer) return;
-    
-    // Show demo buttons for authenticated users
-    if (currentUser) {
-        demoContainer.style.display = 'block';
-        
-        // Water reminder button
-        if (waterBtn) {
-            waterBtn.addEventListener('click', async () => {
-                try {
-                    waterBtn.disabled = true;
-                    waterBtn.textContent = '💧 Sending...';
-                    
-                    const response = await fetch(`${API_BASE_URL}/chat/demo/water-reminder`, {
-                        method: 'POST',
-                        headers: getAuthHeaders()
-                    });
-                    
-                    if (response.ok) {
-                        const data = await response.json();
-                        console.log('💧 Water reminder response:', data);
-                        addMessage('system', `✅ ${data.message}`);
-                        
-                        // Force immediate notification check for new reminders
-                        console.log('🔔 Triggering notification check in 500ms...');
-                        setTimeout(() => {
-                            if (typeof forceNotificationCheck === 'function') {
-                                console.log('🚀 Calling forceNotificationCheck...');
-                                forceNotificationCheck();
-                            } else if (typeof window.forceNotificationCheck === 'function') {
-                                console.log('🚀 Calling window.forceNotificationCheck...');
-                                window.forceNotificationCheck();
-                            } else {
-                                console.error('❌ forceNotificationCheck function not available');
-                                console.log('🔄 Falling back to loadChatHistory...');
-                                // Fallback: reload chat history to show the notification
-                                loadChatHistory();
-                            }
-                        }, 500);
-                        
-                        // ADDITIONAL FIX: Also try to display the notification directly
-                        setTimeout(() => {
-                            console.log('🎯 Direct notification display attempt...');
-                            if (typeof window.displaySystemNotification === 'function') {
-                                const directNotification = {
-                                    id: 'direct-' + Date.now(),
-                                    title: '💧 Hydration Reminder',
-                                    message: "💡 💧 Hydration Reminder\n\nIt's time to drink some water! Stay hydrated for better health and energy.",
-                                    timestamp: new Date().toISOString(),
-                                    action_buttons: [
-                                        { id: 'log_water', label: '💧 Log Water' },
-                                        { id: 'snooze_reminder', label: '⏰ Remind Later' }
-                                    ]
-                                };
-                                window.displaySystemNotification(directNotification);
-                                console.log('✅ Direct notification displayed');
-                            }
-                        }, 1000);
-                    } else {
-                        console.error('❌ Water reminder failed:', response.status);
-                        addMessage('system', '❌ Failed to send water reminder');
-                    }
-                } catch (error) {
-                    console.error('Error sending water reminder:', error);
-                    addMessage('system', '❌ Error sending water reminder');
-                } finally {
-                    waterBtn.disabled = false;
-                    waterBtn.textContent = '💧 Water Reminder';
-                }
-            });
-        }
-        
-        // Challenge reminder button
-        if (challengeBtn) {
-            challengeBtn.addEventListener('click', async () => {
-                try {
-                    challengeBtn.disabled = true;
-                    challengeBtn.textContent = '🎯 Sending...';
-                    
-                    const response = await fetch(`${API_BASE_URL}/chat/demo/challenge-reminder`, {
-                        method: 'POST',
-                        headers: getAuthHeaders()
-                    });
-                    
-                    if (response.ok) {
-                        const data = await response.json();
-                        console.log('🎯 Challenge reminder response:', data);
-                        addMessage('system', `✅ ${data.message}`);
-                        
-                        // Force immediate notification check for new reminders
-                        console.log('🔔 Triggering notification check in 500ms...');
-                        setTimeout(() => {
-                            if (typeof forceNotificationCheck === 'function') {
-                                console.log('🚀 Calling forceNotificationCheck...');
-                                forceNotificationCheck();
-                            } else if (typeof window.forceNotificationCheck === 'function') {
-                                console.log('🚀 Calling window.forceNotificationCheck...');
-                                window.forceNotificationCheck();
-                            } else {
-                                console.error('❌ forceNotificationCheck function not available');
-                                console.log('🔄 Falling back to loadChatHistory...');
-                                // Fallback: reload chat history to show the notification
-                                loadChatHistory();
-                            }
-                        }, 500);
-                        
-                        // ADDITIONAL FIX: Also try to display the notification directly
-                        setTimeout(() => {
-                            console.log('🎯 Direct challenge notification display attempt...');
-                            if (typeof window.displaySystemNotification === 'function') {
-                                const directNotification = {
-                                    id: 'direct-challenge-' + Date.now(),
-                                    title: '🎯 Daily Challenge',
-                                    message: "💡 🎯 Daily Challenge\n\nReady for today's challenge? Complete a 10-minute mindfulness session to boost your focus and well-being!",
-                                    timestamp: new Date().toISOString(),
-                                    action_buttons: [
-                                        { id: 'start_challenge', label: '🚀 Start Challenge' },
-                                        { id: 'view_progress', label: '📊 View Progress' },
-                                        { id: 'snooze_challenge', label: '⏰ Remind Later' }
-                                    ]
-                                };
-                                window.displaySystemNotification(directNotification);
-                                console.log('✅ Direct challenge notification displayed');
-                            }
-                        }, 1000);
-                    } else {
-                        console.error('❌ Challenge reminder failed:', response.status);
-                        addMessage('system', '❌ Failed to send challenge reminder');
-                    }
-                } catch (error) {
-                    console.error('Error sending challenge reminder:', error);
-                    addMessage('system', '❌ Error sending challenge reminder');
-                } finally {
-                    challengeBtn.disabled = false;
-                    challengeBtn.textContent = '🎯 Challenge Reminder';
-                }
-            });
-        }
-        
-        // Both reminders button
-        if (bothBtn) {
-            bothBtn.addEventListener('click', async () => {
-                try {
-                    bothBtn.disabled = true;
-                    bothBtn.textContent = '🚀 Sending...';
-                    
-                    const response = await fetch(`${API_BASE_URL}/chat/demo/reminders`, {
-                        method: 'POST',
-                        headers: getAuthHeaders()
-                    });
-                    
-                    if (response.ok) {
-                        const data = await response.json();
-                        addMessage('system', `✅ ${data.message}`);
-                        // Force immediate notification check for new reminders
-                        setTimeout(() => {
-                            if (typeof forceNotificationCheck === 'function') {
-                                forceNotificationCheck();
-                            }
-                        }, 500); // Reduced delay for faster response
-                    } else {
-                        addMessage('system', '❌ Failed to send reminders');
-                    }
-                } catch (error) {
-                    console.error('Error sending reminders:', error);
-                    addMessage('system', '❌ Error sending reminders');
-                } finally {
-                    bothBtn.disabled = false;
-                    bothBtn.textContent = '🚀 Both Reminders';
-                }
-            });
-        }
-        
-        // Toggle demo buttons visibility
-        if (toggleBtn) {
-            toggleBtn.addEventListener('click', () => {
-                const isHidden = demoContainer.style.display === 'none';
-                demoContainer.style.display = isHidden ? 'block' : 'none';
-                toggleBtn.textContent = isHidden ? 'Hide Demo' : 'Show Demo';
-            });
-        }
-    } else {
-        demoContainer.style.display = 'none';
-    }
+    // The demo controls are now handled by initializeDemoControls()
+    // This function is kept for compatibility but functionality moved to expandable system
+    console.log('🎯 Demo reminder buttons setup - using expandable demo controls');
 }
 
 // Toggle chat visibility
@@ -413,6 +238,9 @@ function openChat() {
     // Clear notification badge
     hasNewMessage = false;
     chatbotBadge.style.display = 'none';
+    
+    // Update header with current user info
+    updateChatHeader();
     
     // Check if Quick Actions button should be shown when chat opens
     setTimeout(() => {
@@ -508,8 +336,8 @@ function triggerModule(moduleId, moduleName) {
 // Initialize chat session
 async function initializeChat() {
     try {
-        // Load chat history first
-        await loadChatHistory();
+        // Load chat history first and get message count
+        const messageCount = await loadChatHistory();
         
         const response = await fetch(`${API_BASE_URL}/chat/init`, {
             headers: getAuthHeaders()
@@ -526,14 +354,22 @@ async function initializeChat() {
         const data = await response.json();
         console.log('🚀 initializeChat received data:', data);
         
-        // Display initial message if it exists
-        // For new users, always show the greeting message
+        // Only display initial message if it exists
         if (data.message && data.message.trim()) {
-            console.log('📝 Adding greeting message:', data.message);
-            addMessage('assistant', data.message);
+            // Always show the greeting if the backend sends one
+            // The backend already handles the logic for whether a greeting is needed
+            if (data.is_new_greeting) {
+                console.log('📝 Adding new greeting message:', data.message);
+                addMessage('assistant', data.message);
+            } else {
+                console.log('📝 Backend says no new greeting needed');
+            }
         }
         
-        // Show UI elements based on response
+        // Ensure "Today" separator is always visible at the bottom
+        ensureTodaySeparatorVisible();
+        
+        // Show UI elements based on response (but don't reload history)
         console.log('🎛️ Calling updateUIElements with:', data.ui_elements, data);
         updateUIElements(data.ui_elements || [], data);
         
@@ -543,9 +379,9 @@ async function initializeChat() {
     }
 }
 
-async function loadChatHistory() {
+async function loadChatHistory(limit = 200, append = false) {
     try {
-        const response = await fetch(`${API_BASE_URL}/chat/messages?limit=200`, {
+        const response = await fetch(`${API_BASE_URL}/chat/messages?limit=${limit}`, {
             headers: getAuthHeaders()
         });
         
@@ -553,49 +389,122 @@ async function loadChatHistory() {
             const data = await response.json();
             const messages = data.messages || [];
             
-            // Store existing UI elements before clearing
-            const existingEmojiSelector = document.querySelector('.inline-emoji-selector');
-            const existingActivityButtons = document.querySelector('.inline-activity-buttons');
+            // Store existing UI elements before clearing (only if not appending)
             let savedEmojiSelector = null;
             let savedActivityButtons = null;
             
-            if (existingEmojiSelector && !existingEmojiSelector.querySelector('.selected')) {
-                savedEmojiSelector = existingEmojiSelector.cloneNode(true);
+            if (!append) {
+                const existingEmojiSelector = document.querySelector('.inline-emoji-selector');
+                const existingActivityButtons = document.querySelector('.inline-activity-buttons');
+                
+                if (existingEmojiSelector && !existingEmojiSelector.querySelector('.selected')) {
+                    savedEmojiSelector = existingEmojiSelector.cloneNode(true);
+                }
+                if (existingActivityButtons) {
+                    savedActivityButtons = existingActivityButtons.cloneNode(true);
+                    // Restore click handlers for activity buttons
+                    const originalButtons = existingActivityButtons.querySelectorAll('.activity-btn');
+                    savedActivityButtons.querySelectorAll('.activity-btn').forEach((btn, index) => {
+                        if (originalButtons[index] && originalButtons[index].onclick) {
+                            btn.onclick = originalButtons[index].onclick;
+                        }
+                    });
+                }
+                
+                // Clear existing messages only if not appending
+                if (chatMessages) {
+                    chatMessages.innerHTML = '';
+                }
             }
-            if (existingActivityButtons) {
-                savedActivityButtons = existingActivityButtons.cloneNode(true);
-                // Restore click handlers for activity buttons
-                const originalButtons = existingActivityButtons.querySelectorAll('.activity-btn');
-                savedActivityButtons.querySelectorAll('.activity-btn').forEach((btn, index) => {
-                    if (originalButtons[index] && originalButtons[index].onclick) {
-                        btn.onclick = originalButtons[index].onclick;
+
+            // Add "Load More" button if we hit the limit (and not appending)
+            if (!append && messages.length >= limit) {
+                addLoadMoreButton();
+            }
+
+            // Separate messages by date for WhatsApp-like display
+            const today = new Date().toISOString().split('T')[0];
+            const todayMessages = [];
+            const historicalMessages = [];
+            
+            messages.forEach(msg => {
+                const msgDate = msg.timestamp.split('T')[0];
+                if (msgDate === today) {
+                    todayMessages.push(msg);
+                } else {
+                    historicalMessages.push(msg);
+                }
+            });
+
+            // First, add historical messages with date separators (if any)
+            if (historicalMessages.length > 0) {
+                let lastDateLabel = null;
+                
+                historicalMessages.forEach(msg => {
+                    const msgDate = new Date(msg.timestamp);
+                    const dateLabel = formatDateLabel(msgDate);
+                    if (dateLabel !== lastDateLabel) {
+                        const sep = document.createElement('div');
+                        sep.className = 'chat-date-separator';
+                        
+                        if (dateLabel === 'Yesterday') {
+                            sep.classList.add('yesterday');
+                        }
+                        
+                        const span = document.createElement('span');
+                        span.textContent = dateLabel;
+                        span.setAttribute('data-label', dateLabel);
+                        
+                        sep.appendChild(span);
+                        chatMessages.appendChild(sep);
+                        lastDateLabel = dateLabel;
+                    }
+
+                    if (msg.sender === 'system') {
+                        // Handle system messages
+                        const now = new Date();
+                        const msgDate = new Date(msg.timestamp);
+                        const diffMinutes = (now - msgDate) / (1000 * 60);
+                        if (diffMinutes <= 2) {
+                            const notification = {
+                                id: msg.id,
+                                title: extractNotificationTitle ? extractNotificationTitle(msg.message) : 'System Notification',
+                                message: msg.message,
+                                timestamp: msg.timestamp,
+                                action_buttons: generateActionButtons ? generateActionButtons(msg.message) : []
+                            };
+                            if (typeof displaySystemNotification === 'function') {
+                                displaySystemNotification(notification);
+                            } else if (typeof window.displaySystemNotification === 'function') {
+                                window.displaySystemNotification(notification);
+                            } else {
+                                addMessageWithoutDateCheck('assistant', msg.message);
+                            }
+                        }
+                    } else {
+                        const role = msg.sender === 'user' ? 'user' : 'assistant';
+                        addMessageWithoutDateCheck(role, msg.message);
                     }
                 });
             }
+
+            // Always add "Today" separator
+            const todaySep = document.createElement('div');
+            todaySep.className = 'chat-date-separator today';
             
-            // Clear existing messages
-            if (chatMessages) {
-                chatMessages.innerHTML = '';
-            }
+            const span = document.createElement('span');
+            span.textContent = 'Today';
+            span.setAttribute('data-label', 'Today');
+            
+            todaySep.appendChild(span);
+            chatMessages.appendChild(todaySep);
 
-            let lastDateLabel = null;
-
-            // Add messages in chronological order with date separators
-            messages.forEach(msg => {
-                // Inject a date separator when the date changes
-                const msgDate = new Date(msg.timestamp);
-                const dateLabel = formatDateLabel(msgDate);
-                if (dateLabel !== lastDateLabel) {
-                    const sep = document.createElement('div');
-                    sep.className = 'chat-date-separator';
-                    sep.innerHTML = `<span>${dateLabel}</span>`;
-                    chatMessages.appendChild(sep);
-                    lastDateLabel = dateLabel;
-                }
-
+            // Then add today's messages (if any)
+            todayMessages.forEach(msg => {
                 if (msg.sender === 'system') {
-                    // Only show recent system messages (last 2 minutes) as notifications
+                    // Handle system messages
                     const now = new Date();
+                    const msgDate = new Date(msg.timestamp);
                     const diffMinutes = (now - msgDate) / (1000 * 60);
                     if (diffMinutes <= 2) {
                         const notification = {
@@ -610,30 +519,109 @@ async function loadChatHistory() {
                         } else if (typeof window.displaySystemNotification === 'function') {
                             window.displaySystemNotification(notification);
                         } else {
-                            addMessage('assistant', msg.message);
+                            addMessageWithoutDateCheck('assistant', msg.message);
                         }
                     }
                 } else {
                     const role = msg.sender === 'user' ? 'user' : 'assistant';
-                    addMessage(role, msg.message);
+                    addMessageWithoutDateCheck(role, msg.message);
                 }
             });
             
-            // Restore saved UI elements at the end
-            if (savedEmojiSelector) {
-                chatMessages.appendChild(savedEmojiSelector);
-            }
-            if (savedActivityButtons) {
-                chatMessages.appendChild(savedActivityButtons);
+            // Restore saved UI elements at the end (only if not appending)
+            if (!append) {
+                if (savedEmojiSelector) {
+                    chatMessages.appendChild(savedEmojiSelector);
+                }
+                if (savedActivityButtons) {
+                    chatMessages.appendChild(savedActivityButtons);
+                }
+                
+                // Always scroll to bottom (WhatsApp behavior - shows latest messages)
+                scrollToBottom();
             }
             
-            // Always land on the latest message
-            scrollToBottom();
+            return messages.length; // Return count for pagination logic
         }
     } catch (error) {
         console.error('Error loading chat history:', error);
+        return 0;
     }
 }
+
+// Add "Load More" button for pagination
+function addLoadMoreButton() {
+    // Remove existing load more button if present
+    const existingButton = document.getElementById('loadMoreButton');
+    if (existingButton) {
+        existingButton.remove();
+    }
+    
+    const loadMoreContainer = document.createElement('div');
+    loadMoreContainer.id = 'loadMoreButton';
+    loadMoreContainer.className = 'load-more-container';
+    loadMoreContainer.innerHTML = `
+        <button class="load-more-btn" onclick="loadMoreMessages()">
+            <span class="load-more-icon">📜</span>
+            <span class="load-more-text">Load Older Messages</span>
+        </button>
+    `;
+    
+    // Insert at the top of chat messages
+    if (chatMessages && chatMessages.firstChild) {
+        chatMessages.insertBefore(loadMoreContainer, chatMessages.firstChild);
+    }
+}
+
+// Load more messages (pagination) - Simple approach
+window.loadMoreMessages = async function() {
+    const loadMoreBtn = document.querySelector('.load-more-btn');
+    if (!loadMoreBtn) return;
+    
+    // Show loading state
+    loadMoreBtn.disabled = true;
+    loadMoreBtn.innerHTML = `
+        <span class="load-more-icon">⏳</span>
+        <span class="load-more-text">Loading...</span>
+    `;
+    
+    try {
+        // Get current message count
+        const currentMessages = document.querySelectorAll('.message:not(.load-more-container)').length;
+        
+        // Load more messages (next batch of 100)
+        const response = await fetch(`${API_BASE_URL}/chat/messages?limit=${currentMessages + 100}`, {
+            headers: getAuthHeaders()
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            const allMessages = data.messages || [];
+            
+            if (allMessages.length > currentMessages) {
+                // Reload with more messages
+                await loadChatHistory(allMessages.length);
+            } else {
+                // No more messages
+                loadMoreBtn.innerHTML = `
+                    <span class="load-more-icon">✅</span>
+                    <span class="load-more-text">No Older Messages</span>
+                `;
+                setTimeout(() => {
+                    const container = document.getElementById('loadMoreButton');
+                    if (container) container.remove();
+                }, 2000);
+            }
+        }
+    } catch (error) {
+        console.error('Error loading more messages:', error);
+        loadMoreBtn.innerHTML = `
+            <span class="load-more-icon">❌</span>
+            <span class="load-more-text">Error Loading</span>
+        `;
+        loadMoreBtn.disabled = false;
+    }
+};
 
 function formatDateLabel(date) {
     const today = new Date();
@@ -840,10 +828,17 @@ function updateUIElements(elements, data = {}) {
     // Handle standalone emoji_selector (not part of initialization)
     if (elements.includes('emoji_selector') && !isInitialization) {
         console.log('😊 Showing standalone emoji selector');
+        
+        // Always remove any existing emoji selector first
         const existingEmojiSelector = document.getElementById('inline-emoji-selector');
-        if (!existingEmojiSelector || !existingEmojiSelector.querySelector('.selected')) {
-            showInlineEmojiSelector();
+        if (existingEmojiSelector) {
+            console.log('🗑️ Removing existing emoji selector');
+            existingEmojiSelector.remove();
         }
+        
+        // Always create a new emoji selector for mood logging
+        console.log('✨ Creating new emoji selector');
+        showInlineEmojiSelector();
         textInputContainer.style.display = 'none';
     }
     
@@ -1405,8 +1400,11 @@ function showInlineActivityButtons(activities) {
     }, 1000);
 }
 
-// Add message to chat
+// Add message to chat with automatic date separator detection
 function addMessage(role, text, extraClass = '') {
+    // Check if we need a date separator before this message
+    checkAndAddDateSeparator();
+    
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role} ${extraClass}`;
     
@@ -1417,6 +1415,88 @@ function addMessage(role, text, extraClass = '') {
     messageDiv.appendChild(bubbleDiv);
     chatMessages.appendChild(messageDiv);
     scrollToBottom();
+}
+
+// Add message without date separator check (for history loading)
+function addMessageWithoutDateCheck(role, text, extraClass = '') {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${role} ${extraClass}`;
+    
+    const bubbleDiv = document.createElement('div');
+    bubbleDiv.className = 'message-bubble';
+    bubbleDiv.textContent = text;
+    
+    messageDiv.appendChild(bubbleDiv);
+    chatMessages.appendChild(messageDiv);
+}
+
+// Ensure "Today" separator is always visible at the bottom
+function ensureTodaySeparatorVisible() {
+    const today = formatDateLabel(new Date());
+    
+    // Check if "Today" separator already exists
+    const existingSeparators = document.querySelectorAll('.chat-date-separator span');
+    let hasTodaySeparator = false;
+    
+    existingSeparators.forEach(span => {
+        if (span.textContent === 'Today' || span.getAttribute('data-label') === 'Today') {
+            hasTodaySeparator = true;
+        }
+    });
+    
+    // If no "Today" separator exists, add one at the bottom
+    if (!hasTodaySeparator) {
+        console.log('📅 Ensuring "Today" separator is visible');
+        const todaySep = document.createElement('div');
+        todaySep.className = 'chat-date-separator today';
+        
+        const span = document.createElement('span');
+        span.textContent = 'Today';
+        span.setAttribute('data-label', 'Today');
+        
+        todaySep.appendChild(span);
+        chatMessages.appendChild(todaySep);
+        
+        // Scroll to show the Today separator
+        scrollToBottom();
+    }
+}
+
+// Check if a date separator is needed and add it
+function checkAndAddDateSeparator() {
+    const now = new Date();
+    const currentDateLabel = formatDateLabel(now);
+    
+    // Get the last date separator in the chat
+    const existingSeparators = document.querySelectorAll('.chat-date-separator span');
+    let lastDateLabel = null;
+    
+    if (existingSeparators.length > 0) {
+        // Get the text of the most recent date separator
+        lastDateLabel = existingSeparators[existingSeparators.length - 1].textContent;
+    }
+    
+    // If no separator exists for current date, add one
+    if (lastDateLabel !== currentDateLabel) {
+        const sep = document.createElement('div');
+        sep.className = 'chat-date-separator';
+        
+        // Add special classes for styling
+        if (currentDateLabel === 'Today') {
+            sep.classList.add('today');
+        } else if (currentDateLabel === 'Yesterday') {
+            sep.classList.add('yesterday');
+        }
+        
+        const span = document.createElement('span');
+        span.textContent = currentDateLabel;
+        span.setAttribute('data-label', currentDateLabel);
+        
+        sep.appendChild(span);
+        chatMessages.appendChild(sep);
+        
+        console.log(`📅 Added date separator: ${currentDateLabel}`);
+    }
 }
 
 // Show typing indicator
@@ -1576,7 +1656,11 @@ function showActivityFeedbackButtons(activityData) {
  */
 function scrollToBottom() {
     if (chatMessages) {
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        // Use smooth scrolling for better UX
+        chatMessages.scrollTo({
+            top: chatMessages.scrollHeight,
+            behavior: 'smooth'
+        });
     }
 }
 
@@ -1853,3 +1937,338 @@ function showSimpleFeedbackButtons(actions) {
 }
 
 
+// ===== EXPANDABLE DEMO CONTROLS FUNCTIONALITY =====
+
+let demoControlsExpanded = false;
+
+// Initialize expandable demo controls
+function initializeDemoControls() {
+    console.log('🎯 Initializing demo controls...');
+    
+    const demoToggleBtn = document.getElementById('demoToggleBtn');
+    const demoMinimizeBtn = document.getElementById('demoMinimizeBtn');
+    
+    // Debug: Check if elements exist
+    if (!demoToggleBtn) {
+        console.error('❌ Demo toggle button not found! ID: demoToggleBtn');
+        return;
+    }
+    
+    if (!demoMinimizeBtn) {
+        console.error('❌ Demo minimize button not found! ID: demoMinimizeBtn');
+        return;
+    }
+    
+    console.log('✅ Demo control elements found');
+    
+    // Toggle demo controls
+    if (demoToggleBtn) {
+        demoToggleBtn.addEventListener('click', toggleDemoControls);
+        console.log('✅ Toggle button event listener added');
+    }
+    
+    // Minimize demo controls
+    if (demoMinimizeBtn) {
+        demoMinimizeBtn.addEventListener('click', minimizeDemoControls);
+        console.log('✅ Minimize button event listener added');
+    }
+    
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        // Toggle demo controls on Ctrl+Shift+D
+        if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+            e.preventDefault();
+            toggleDemoControls();
+        }
+        
+        // Minimize demo controls on Escape
+        if (e.key === 'Escape' && demoControlsExpanded) {
+            minimizeDemoControls();
+        }
+    });
+    
+    // Show demo badge initially to indicate availability
+    showDemoBadge();
+    console.log('🎯 Demo controls initialization complete');
+}
+
+function toggleDemoControls() {
+    if (demoControlsExpanded) {
+        minimizeDemoControls();
+    } else {
+        expandDemoControls();
+    }
+}
+
+function expandDemoControls() {
+    const demoToggleBtn = document.getElementById('demoToggleBtn');
+    const demoControlsPanel = document.getElementById('demoControlsPanel');
+    
+    demoToggleBtn.classList.add('expanded');
+    demoControlsPanel.classList.add('expanded');
+    demoControlsExpanded = true;
+    
+    // Hide badge when expanded
+    hideDemoBadge();
+    
+    console.log('🎯 Demo controls expanded');
+}
+
+function minimizeDemoControls() {
+    const demoToggleBtn = document.getElementById('demoToggleBtn');
+    const demoControlsPanel = document.getElementById('demoControlsPanel');
+    
+    demoToggleBtn.classList.remove('expanded');
+    demoControlsPanel.classList.remove('expanded');
+    demoControlsExpanded = false;
+    
+    console.log('🎯 Demo controls minimized');
+}
+
+function showDemoBadge() {
+    const demoBadge = document.getElementById('demoBadge');
+    if (demoBadge && !demoControlsExpanded) {
+        demoBadge.style.display = 'flex';
+    }
+}
+
+function hideDemoBadge() {
+    const demoBadge = document.getElementById('demoBadge');
+    if (demoBadge) {
+        demoBadge.style.display = 'none';
+    }
+}
+
+// Send demo insights
+async function sendDemoInsight(insightType) {
+    // Check if user is authenticated
+    if (!currentUser) {
+        alert('Please login to use demo insights.');
+        return;
+    }
+    
+    const insights = {
+        day_pattern: {
+            title: '📅 Day Pattern Detected',
+            message: "I've noticed that Sundays tend to be challenging for you. You've logged negative moods on 4 out of the last 5 Sundays. This is completely normal - many people experience 'Sunday blues' as they prepare for the week ahead. Let's create a Sunday routine to help you feel more positive!",
+            action_buttons: [
+                { id: 'create_routine', label: '📝 Create Sunday Routine' },
+                { id: 'view_pattern', label: '📊 View Pattern Details' },
+                { id: 'dismiss', label: '✅ Got it!' }
+            ]
+        },
+        
+        sleep_issue: {
+            title: '😴 Sleep Pattern Alert',
+            message: "I'm concerned about your sleep pattern this week. You've averaged only 5.2 hours per night, which is well below the recommended 7-9 hours. I've also noticed your mood ratings have dropped by 40% during this period. Poor sleep might be affecting your emotional well-being.",
+            action_buttons: [
+                { id: 'sleep_tips', label: '💤 Get Sleep Tips' },
+                { id: 'set_bedtime', label: '⏰ Set Bedtime Reminder' },
+                { id: 'track_sleep', label: '📱 Track Sleep Better' }
+            ]
+        },
+        
+        activity_success: {
+            title: '🏃 Activity Success Pattern',
+            message: "Great news! I've found your winning formula. When you do yoga in the morning, you're 85% more likely to have a positive mood throughout the day. You've done this 12 times, and 10 of those days were rated as 'good' or 'excellent'. Morning yoga seems to be your superpower!",
+            action_buttons: [
+                { id: 'schedule_yoga', label: '🧘 Schedule Morning Yoga' },
+                { id: 'view_correlation', label: '📈 View Correlation' },
+                { id: 'share_success', label: '🎉 Celebrate!' }
+            ]
+        },
+        
+        weekly_summary: {
+            title: '📊 Weekly Progress Summary',
+            message: "What a week! Here's your wellness snapshot:\n💧 Hydration: 8.2/8 glasses daily (103% of goal!)\n🏃 Exercise: 4 sessions, 180 total minutes\n😊 Mood: 78% positive days (up 15% from last week)\n🎯 Challenges: Completed hydration challenge!\n🔥 Current streak: 5 days of consistent logging.\n\nYou're building incredible healthy habits!",
+            action_buttons: [
+                { id: 'detailed_report', label: '📋 Detailed Report' },
+                { id: 'next_week_goals', label: '🎯 Set Next Week Goals' },
+                { id: 'share_wins', label: '🏆 Share Wins' }
+            ]
+        },
+        
+        predictive: {
+            title: '🔮 Predictive Wellness Insight',
+            message: "Based on your patterns, I predict you'll feel most energetic tomorrow between 10 AM - 12 PM. This is your optimal window for challenging activities! Your historical data shows 92% positive mood ratings during this time when you've had good sleep (which you did last night).",
+            action_buttons: [
+                { id: 'schedule_workout', label: '🏃 Schedule Workout' },
+                { id: 'set_energy_reminder', label: '⚡ Set Energy Reminder' },
+                { id: 'view_prediction', label: '📊 View Prediction Model' }
+            ]
+        },
+        
+        stress_pattern: {
+            title: '😰 Stress Pattern Analysis',
+            message: "I've identified a stress pattern that might help you. You tend to feel most stressed on Monday mornings (90% of the time) and Wednesday afternoons (75% of the time). However, when you do breathing exercises on Sunday evenings, your Monday stress levels drop by 50%.",
+            action_buttons: [
+                { id: 'sunday_breathing', label: '🫁 Sunday Breathing Reminder' },
+                { id: 'stress_toolkit', label: '🧰 Stress Management Kit' },
+                { id: 'pattern_details', label: '📊 View Stress Pattern' }
+            ]
+        }
+    };
+    
+    const insight = insights[insightType];
+    if (!insight) {
+        console.error('Unknown insight type:', insightType);
+        return;
+    }
+    
+    // Create demo notification
+    const notification = {
+        id: `demo_insight_${Date.now()}`,
+        title: insight.title,
+        message: insight.message,
+        timestamp: new Date().toISOString(),
+        action_buttons: insight.action_buttons,
+        isDemoInsight: true
+    };
+    
+    // Display the insight using the beautiful system notification
+    if (typeof window.displaySystemNotification === 'function') {
+        window.displaySystemNotification(notification);
+    } else {
+        // Fallback to demo notification if system notifications not available
+        displayDemoNotification(notification);
+    }
+    
+    // Minimize demo controls after sending
+    minimizeDemoControls();
+    
+    console.log(`🧠 Demo insight sent: ${insightType}`);
+}
+
+// Send demo reminders (water/challenge)
+async function sendDemoReminder(reminderType) {
+    // Check if user is authenticated
+    if (!currentUser) {
+        alert('Please login to use demo reminders.');
+        return;
+    }
+    
+    const reminders = {
+        water: {
+            title: '💧 Hydration Check!',
+            message: "It's been a while since your last water intake. Remember to stay hydrated! Your body needs water to function at its best.",
+            action_buttons: [
+                { id: 'log_water', label: '💧 Log Water' },
+                { id: 'snooze_reminder', label: '⏰ Remind Later' }
+            ]
+        },
+        
+        challenge: {
+            title: '🎯 Challenge Check-in',
+            message: "How's your Water Intake Challenge going? You're doing great! Keep up the momentum and stay hydrated throughout the day.",
+            action_buttons: [
+                { id: 'view_progress', label: '📊 View Progress' },
+                { id: 'log_activity', label: '✅ Log Activity' }
+            ]
+        }
+    };
+    
+    const reminder = reminders[reminderType];
+    if (!reminder) {
+        console.error('Unknown reminder type:', reminderType);
+        return;
+    }
+    
+    // Create demo notification
+    const notification = {
+        id: `demo_reminder_${Date.now()}`,
+        title: reminder.title,
+        message: reminder.message,
+        timestamp: new Date().toISOString(),
+        action_buttons: reminder.action_buttons,
+        isDemoReminder: true
+    };
+    
+    // Display the reminder using the beautiful system notification
+    if (typeof window.displaySystemNotification === 'function') {
+        window.displaySystemNotification(notification);
+    } else {
+        // Fallback to demo notification if system notifications not available
+        displayDemoNotification(notification);
+    }
+    
+    // Minimize demo controls after sending
+    minimizeDemoControls();
+    
+    console.log(`💧 Demo reminder sent: ${reminderType}`);
+}
+
+// Display demo notification in chat
+function displayDemoNotification(notification) {
+    const chatMessages = document.getElementById('chatMessages');
+    
+    // Create message element
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message assistant system-notification';
+    
+    if (notification.isDemoInsight) {
+        messageDiv.classList.add('demo-insight-notification');
+    }
+    
+    // Build notification HTML
+    let actionButtonsHtml = '';
+    if (notification.action_buttons && notification.action_buttons.length > 0) {
+        actionButtonsHtml = `
+            <div class="notification-actions">
+                ${notification.action_buttons.map(btn => 
+                    `<button class="action-btn demo-action-btn" data-action="${btn.id}">${btn.label}</button>`
+                ).join('')}
+            </div>
+        `;
+    }
+    
+    messageDiv.innerHTML = `
+        <div class="notification-header">
+            <div class="notification-icon">🧠</div>
+            <div class="notification-title">${notification.title}</div>
+            <div class="notification-timestamp">${new Date(notification.timestamp).toLocaleTimeString()}</div>
+        </div>
+        <div class="notification-message">${notification.message.replace(/\n/g, '<br>')}</div>
+        ${actionButtonsHtml}
+    `;
+    
+    // Add to chat
+    chatMessages.appendChild(messageDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    
+    // Add click handlers for action buttons
+    const actionButtons = messageDiv.querySelectorAll('.demo-action-btn');
+    actionButtons.forEach(btn => {
+        btn.addEventListener('click', function() {
+            const action = this.getAttribute('data-action');
+            handleDemoActionClick(action, notification);
+        });
+    });
+}
+
+// Handle demo action button clicks
+function handleDemoActionClick(action, notification) {
+    console.log(`Demo action clicked: ${action}`);
+    
+    // Add a response message
+    const responseMessages = {
+        create_routine: "Great! I'll help you create a personalized Sunday routine. Let's start with some calming activities...",
+        view_pattern: "Here's your detailed pattern analysis showing mood trends over the past month...",
+        dismiss: "Got it! I'll keep monitoring your patterns and let you know if I notice anything else.",
+        sleep_tips: "Here are some evidence-based sleep tips tailored for you...",
+        set_bedtime: "Perfect! I've set a bedtime reminder for 10:30 PM. Sweet dreams! 😴",
+        schedule_yoga: "Excellent choice! I've added morning yoga to your routine. Your future self will thank you! 🧘",
+        log_water: "Water logged! 💧 You're doing great with your hydration goals.",
+        view_progress: "Here's your challenge progress: 7/14 days completed. You're halfway there! 🎯"
+    };
+    
+    const responseMessage = responseMessages[action] || "Action processed successfully!";
+    
+    // Add response to chat
+    setTimeout(() => {
+        addMessage(responseMessage, 'assistant');
+    }, 500);
+}
+
+// Make demo functions globally accessible for HTML onclick handlers
+window.sendDemoInsight = sendDemoInsight;
+window.sendDemoReminder = sendDemoReminder;

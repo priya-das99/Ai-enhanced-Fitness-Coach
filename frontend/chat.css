@@ -34,11 +34,26 @@ body {
     justify-content: center;
     transition: all 0.3s ease;
     position: relative;
+    animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+    0%, 100% {
+        transform: translateY(0px);
+    }
+    50% {
+        transform: translateY(-10px);
+    }
 }
 
 .chatbot-button:hover {
-    transform: scale(1.1);
-    box-shadow: 0 6px 30px rgba(102, 126, 234, 0.6);
+    transform: scale(1.1) translateY(-5px);
+    box-shadow: 0 8px 30px rgba(102, 126, 234, 0.6);
+    animation: none;
+}
+
+.chatbot-button:active {
+    transform: scale(0.95);
 }
 
 .chatbot-button svg {
@@ -77,10 +92,11 @@ body {
 /* Chat Container - Hidden by default */
 .chat-container {
     position: fixed;
-    bottom: 90px;
+    bottom: 100px;
     right: 20px;
-    width: 400px;
+    width: 450px;
     height: 600px;
+    max-height: 85vh;
     background: white;
     border-radius: 20px;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
@@ -99,21 +115,7 @@ body {
     transform: translateY(0) scale(1);
 }
 
-/* Hover effect - preview and keep open when hovering chat */
-.chatbot-widget:hover .chat-container:not(.open),
-.chat-container:not(.open):hover {
-    display: flex;
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    pointer-events: all;
-}
-
-/* Add a subtle glow to show it's interactive on hover */
-.chat-container:not(.open):hover {
-    box-shadow: 0 10px 40px rgba(102, 126, 234, 0.4);
-}
-
-/* When chat is open, enable all interactions */
+/* Remove hover preview - only show on click */
 .chat-container.open {
     pointer-events: all;
 }
@@ -123,6 +125,8 @@ body {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     padding: 20px;
+    border-radius: 20px 20px 0 0;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
 
 .header-content {
@@ -154,17 +158,24 @@ body {
 
 .minimize-btn:hover {
     background: rgba(255, 255, 255, 0.3);
-    transform: scale(1.1);
+    transform: scale(1.1) rotate(90deg);
+}
+
+.minimize-btn:active {
+    transform: scale(0.9);
 }
 
 .chat-header h1 {
-    font-size: 24px;
-    margin-bottom: 5px;
+    font-size: 20px;
+    margin-bottom: 4px;
+    font-weight: 700;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .chat-header .subtitle {
-    font-size: 14px;
-    opacity: 0.9;
+    font-size: 13px;
+    opacity: 0.95;
+    font-weight: 400;
 }
 
 .logout-btn {
@@ -190,10 +201,11 @@ body {
     overflow-y: auto;
     padding: 20px;
     background: #f5f5f5;
+    min-height: 300px;
 }
 
 .message {
-    margin-bottom: 15px;
+    margin-bottom: 20px;
     display: flex;
     animation: fadeIn 0.3s ease-in;
 }
@@ -267,14 +279,14 @@ body {
     margin-top: 5px;
 }
 
-/* Mood Selector */
+/* Compact Mood Selector */
 .mood-selector {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-    gap: 10px;
-    padding: 15px;
+    grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+    gap: 8px;
+    padding: 12px;
     background: white;
-    border-radius: 18px;
+    border-radius: 16px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
     max-width: 100%;
 }
@@ -284,45 +296,48 @@ body {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 15px 10px;
+    padding: 10px 8px;
     background: #f8f9fa;
     border: 2px solid #e0e0e0;
-    border-radius: 12px;
+    border-radius: 10px;
     cursor: pointer;
     transition: all 0.3s;
-    min-height: 80px;
+    min-height: 65px;
 }
 
 .mood-button:hover {
     background: #fff;
     border-color: #667eea;
-    transform: translateY(-3px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+    transform: translateY(-2px);
+    box-shadow: 0 3px 8px rgba(102, 126, 234, 0.2);
 }
 
 .mood-button:active {
-    transform: translateY(-1px);
+    transform: translateY(0);
 }
 
 .mood-emoji {
-    font-size: 36px;
-    margin-bottom: 8px;
+    font-size: 28px;
+    margin-bottom: 6px;
 }
 
 .mood-label {
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
     color: #333;
-    line-height: 1.4;
+    line-height: 1.2;
+    text-align: center;
 }
 
 /* Input Area */
 .chat-input-container {
     display: flex;
-    padding: 20px;
+    padding: 20px 25px;
     background: white;
     border-top: 1px solid #e0e0e0;
-    gap: 10px;
+    gap: 12px;
+    align-items: center;
+    position: relative;
 }
 
 .chat-input {
@@ -471,14 +486,37 @@ button:focus-visible {
 
     .chat-container {
         width: calc(100vw - 20px);
-        height: calc(100vh - 100px);
+        height: calc(100vh - 120px);
         bottom: 80px;
         right: 10px;
         max-width: none;
+        max-height: none;
     }
 
     .message-bubble {
         max-width: 80%;
+    }
+}
+
+/* Tablet and larger screens - comfortable size */
+@media (min-width: 769px) and (max-width: 1199px) {
+    .chat-container {
+        width: 450px;
+        height: 600px;
+        max-height: 80vh;
+    }
+}
+
+/* Desktop - larger comfortable size */
+@media (min-width: 1200px) {
+    .chat-container {
+        width: 500px;
+        height: 650px;
+        max-height: 85vh;
+    }
+    
+    .chat-messages {
+        padding: 25px;
     }
 }
 
@@ -738,12 +776,12 @@ button:focus-visible {
 }
 
 
-/* Multiple Actions Grid (NEW!) */
+/* Multiple Actions Grid - Compact Design */
 .actions-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 12px;
-    padding: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px;
+    padding: 8px;
     max-width: 100%;
 }
 
@@ -751,15 +789,15 @@ button:focus-visible {
     background: white;
     border: 2px solid #e0e0e0;
     border-radius: 12px;
-    padding: 15px;
+    padding: 12px;
     transition: all 0.3s ease;
     cursor: pointer;
 }
 
 .action-card-compact:hover {
     border-color: #667eea;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(102, 126, 234, 0.2);
 }
 
 .action-card-compact.skip-card {
@@ -776,43 +814,43 @@ button:focus-visible {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }
 
 .action-header h4 {
-    font-size: 17px;
+    font-size: 15px;
     color: #333;
     margin: 0;
     font-weight: 600;
 }
 
 .action-duration {
-    font-size: 13px;
+    font-size: 11px;
     color: #667eea;
     font-weight: 600;
     background: #f0f3ff;
-    padding: 4px 10px;
-    border-radius: 10px;
+    padding: 3px 8px;
+    border-radius: 8px;
 }
 
 .action-description {
-    font-size: 14px;
+    font-size: 13px;
     color: #666;
-    margin-bottom: 12px;
-    line-height: 1.6;
+    margin-bottom: 10px;
+    line-height: 1.4;
 }
 
 .action-btn-select,
 .action-btn-skip {
     width: 100%;
-    padding: 12px;
+    padding: 8px 12px;
     border: none;
-    border-radius: 8px;
-    font-size: 15px;
-    font-weight: 600;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.3s ease;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.2px;
 }
 
 .action-btn-select {
@@ -822,7 +860,7 @@ button:focus-visible {
 
 .action-btn-select:hover {
     transform: scale(1.02);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    box-shadow: 0 3px 8px rgba(102, 126, 234, 0.4);
 }
 
 .action-btn-skip {
@@ -841,32 +879,35 @@ button:focus-visible {
     }
 }
 
-/* Activity Buttons */
+/* Compact Quick Actions Design */
 .inline-activity-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 10px;
-    margin-top: 10px;
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    flex-wrap: wrap;
 }
 
 .inline-activity-btn {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 8px;
-    padding: 15px;
+    gap: 6px;
+    padding: 8px 12px;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     border: none;
-    border-radius: 12px;
+    border-radius: 20px;
     cursor: pointer;
     transition: all 0.3s ease;
     color: white;
     font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    min-height: 36px;
 }
 
 .inline-activity-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 }
 
 .inline-activity-btn:active {
@@ -874,13 +915,14 @@ button:focus-visible {
 }
 
 .activity-icon {
-    font-size: 32px;
+    font-size: 16px;
+    line-height: 1;
 }
 
 .activity-name {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
-    text-align: center;
+    line-height: 1;
 }
 
 .activity-message {
@@ -888,7 +930,7 @@ button:focus-visible {
     padding: 0 !important;
 }
 
-/* Activity Buttons */
+/* Activity Buttons - Compact Design */
 .activity-message {
     width: 100%;
     max-width: 100%;
@@ -900,51 +942,51 @@ button:focus-visible {
 .activity-grid {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
-    padding: 15px;
+    gap: 8px;
+    padding: 12px;
     background: white;
-    border-radius: 18px;
+    border-radius: 16px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     width: 100%;
     max-width: 100%;
-    margin-top: 10px;
+    margin-top: 8px;
 }
 
 .activity-btn {
-    padding: 16px 20px;
+    padding: 10px 16px;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     border: none;
-    border-radius: 12px;
+    border-radius: 20px;
     cursor: pointer;
-    font-size: 15px;
-    font-weight: 600;
+    font-size: 13px;
+    font-weight: 500;
     transition: all 0.3s;
-    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+    box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3);
     text-align: center;
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 60px;
-    line-height: 1.5;
-    letter-spacing: 0.3px;
-    flex: 1 1 calc(50% - 6px);
-    min-width: 140px;
+    min-height: 40px;
+    line-height: 1.3;
+    letter-spacing: 0.2px;
+    flex: 0 1 auto;
+    white-space: nowrap;
 }
 
 .activity-btn:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 }
 
 .activity-btn:active {
-    transform: translateY(-1px);
+    transform: translateY(0);
 }
 
 .activity-label {
     display: block;
-    line-height: 1.5;
-    font-size: 15px;
+    line-height: 1.3;
+    font-size: 13px;
 }
 
 @media (max-width: 480px) {
@@ -1210,4 +1252,422 @@ button:focus-visible {
     border-radius: 10px;
     border: 1px solid #e0e0e0;
     white-space: nowrap;
+}
+/* Load More Button Styles */
+.load-more-container {
+    display: flex;
+    justify-content: center;
+    padding: 15px 0;
+    margin: 10px 0;
+    border-bottom: 1px solid #e1e5e9;
+}
+
+.load-more-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 25px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 10px rgba(102, 126, 234, 0.3);
+}
+
+.load-more-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.load-more-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.load-more-icon {
+    font-size: 16px;
+}
+
+.load-more-text {
+    font-weight: 500;
+}
+
+/* Enhanced Date Separator Styles */
+.chat-date-separator {
+    display: flex;
+    justify-content: center;
+    margin: 20px 0;
+    position: relative;
+}
+
+.chat-date-separator::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent 0%, #e1e5e9 20%, #e1e5e9 80%, transparent 100%);
+}
+
+.chat-date-separator span {
+    background: #f0f2f5;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #65676b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border: 1px solid #e1e5e9;
+    position: relative;
+    z-index: 1;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+/* Special styling for "Today" separator */
+.chat-date-separator span:contains("Today"),
+.chat-date-separator span[data-label="Today"] {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-color: #667eea;
+    font-weight: 700;
+    box-shadow: 0 3px 8px rgba(102, 126, 234, 0.3);
+}
+
+/* Enhanced Date Separator Styles */
+.chat-date-separator {
+    display: flex;
+    justify-content: center;
+    margin: 20px 0;
+    position: relative;
+}
+
+.chat-date-separator::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent 0%, #e1e5e9 20%, #e1e5e9 80%, transparent 100%);
+}
+
+.chat-date-separator span {
+    background: #f0f2f5;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #65676b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border: 1px solid #e1e5e9;
+    position: relative;
+    z-index: 1;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+/* Special styling for "Today" separator */
+.chat-date-separator span:contains("Today"),
+.chat-date-separator span[data-label="Today"] {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-color: #667eea;
+    font-weight: 700;
+    box-shadow: 0 3px 8px rgba(102, 126, 234, 0.3);
+}
+
+/* JavaScript will add this class for Today separators */
+.chat-date-separator.today span {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-color: #667eea;
+    font-weight: 700;
+    box-shadow: 0 3px 8px rgba(102, 126, 234, 0.3);
+}
+
+/* Empty Today separator (when no messages yet today) */
+.chat-date-separator.today:last-child {
+    margin-bottom: 20px;
+    animation: todayPulse 2s ease-in-out infinite;
+}
+
+@keyframes todayPulse {
+    0%, 100% { 
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(102, 126, 234, 0.4);
+    }
+    50% { 
+        transform: scale(1.02);
+        box-shadow: 0 0 0 8px rgba(102, 126, 234, 0.1);
+    }
+}
+
+/* Yesterday gets a softer highlight */
+.chat-date-separator.yesterday span {
+    background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+    color: white;
+    border-color: #48bb78;
+    box-shadow: 0 2px 6px rgba(72, 187, 120, 0.3);
+}
+
+/* Loading indicator for Load More button */
+@keyframes loadingPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.load-more-btn:disabled .load-more-icon {
+    animation: loadingPulse 1.5s ease-in-out infinite;
+}
+
+/* Improved message spacing around date separators */
+.message + .chat-date-separator {
+    margin-top: 25px;
+}
+
+.chat-date-separator + .message {
+    margin-top: 15px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .load-more-btn {
+        padding: 10px 20px;
+        font-size: 13px;
+    }
+    
+    .chat-date-separator {
+        margin: 15px 0;
+    }
+    
+    .chat-date-separator span {
+        padding: 6px 12px;
+        font-size: 11px;
+    }
+}
+/* Demo Controls Styles - Integrated into Input Area */
+.demo-controls-container {
+    position: relative;
+    z-index: 100;
+    display: flex !important;
+    align-items: center;
+}
+
+.demo-toggle-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    border: none;
+    color: white;
+    font-size: 18px;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(79, 172, 254, 0.3);
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    position: relative;
+    flex-shrink: 0;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+.demo-toggle-btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(79, 172, 254, 0.5);
+}
+
+.demo-toggle-btn.expanded {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+    box-shadow: 0 2px 8px rgba(255, 107, 107, 0.3);
+}
+
+.demo-toggle-btn.expanded:hover {
+    box-shadow: 0 4px 12px rgba(255, 107, 107, 0.5);
+}
+
+.demo-controls-panel {
+    position: absolute;
+    bottom: 50px;
+    right: 0;
+    background: white;
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    width: 380px;
+    max-height: 400px;
+    overflow-y: auto;
+    transform: translateY(10px) scale(0.95);
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 1000;
+}
+
+.demo-controls-panel.expanded {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+    visibility: visible;
+}
+
+.demo-header {
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    color: white;
+    padding: 12px 16px;
+    border-radius: 15px 15px 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.demo-header h4 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.demo-minimize-btn {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+
+.demo-minimize-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.demo-sections {
+    padding: 16px;
+}
+
+.demo-section {
+    margin-bottom: 20px;
+}
+
+.demo-section:last-child {
+    margin-bottom: 0;
+}
+
+.demo-section h5 {
+    margin: 0 0 10px 0;
+    color: #333;
+    font-size: 14px;
+    font-weight: 600;
+    border-bottom: 2px solid #e1e8ed;
+    padding-bottom: 4px;
+}
+
+.demo-buttons {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 6px;
+}
+
+.demo-btn {
+    padding: 8px 10px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.demo-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.insight-btn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.reminder-btn {
+    background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+    color: white;
+}
+
+/* Demo badge indicator */
+.demo-badge {
+    position: absolute;
+    top: -3px;
+    right: -3px;
+    background: #ff4444;
+    color: white;
+    border-radius: 50%;
+    width: 16px;
+    height: 16px;
+    font-size: 10px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: demoPulse 2s infinite;
+}
+
+@keyframes demoPulse {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.1);
+    }
+}
+
+/* Demo notification styles */
+.demo-insight-notification {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-left: 4px solid #5a67d8;
+    position: relative;
+}
+
+.demo-insight-notification::before {
+    content: '🎯 DEMO';
+    position: absolute;
+    top: 5px;
+    right: 10px;
+    font-size: 10px;
+    background: rgba(255, 255, 255, 0.2);
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-weight: bold;
+}
+
+/* Responsive design for demo controls */
+@media (max-width: 768px) {
+    .demo-toggle-btn {
+        width: 36px;
+        height: 36px;
+        font-size: 16px;
+    }
+    
+    .demo-controls-panel {
+        width: calc(100vw - 40px);
+        max-width: 320px;
+        max-height: 350px;
+        right: -10px;
+    }
+    
+    .demo-buttons {
+        grid-template-columns: 1fr;
+    }
 }

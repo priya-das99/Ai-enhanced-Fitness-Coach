@@ -116,13 +116,18 @@ class MoodWorkflow(BaseWorkflow):
         if is_button_click and has_logged_mood_today(user_id) and not is_log_again_request:
             logger.info(f"User {user_id} already logged mood today")
             # Start workflow first, then update data
-            state.start_workflow(self.workflow_name, {'step': 'asking_mood'})
+            state.start_workflow(self.workflow_name, {'step': 'asking_confirmation'})
             return WorkflowResponse(
                 message="You already logged your mood today! Want to log it again anyway?",
-                completed=False,  # Keep workflow active to handle emoji selection
+                completed=False,  # Keep workflow active to handle yes/no response
                 next_state=ConversationState.WORKFLOW_ACTIVE,
-                ui_elements=['emoji_selector'],
-                extra_data={}
+                ui_elements=['action_buttons_multiple'],
+                extra_data={
+                    'actions': [
+                        {'id': 'log_again_yes', 'name': 'Yes, log again'},
+                        {'id': 'log_again_no', 'name': 'No, keep current'}
+                    ]
+                }
             )
         
         # If user explicitly requests to log again, allow it
@@ -561,7 +566,10 @@ class MoodWorkflow(BaseWorkflow):
         if feedback_response:
             return feedback_response
         
-        if step == 'asking_mood':
+        if step == 'asking_confirmation':
+            return self._handle_log_again_confirmation(message, state, user_id)
+        
+        elif step == 'asking_mood':
             return self._handle_mood_selection(message, state, user_id)
         
         elif step == 'mood_selected':
@@ -580,6 +588,50 @@ class MoodWorkflow(BaseWorkflow):
         logger.warning(f"Unknown step '{step}' in mood workflow")
         return self._complete_workflow(message="Mood logging completed.")
     
+    def _handle_log_again_confirmation(self, message: str, state: WorkflowState, user_id: int) -> WorkflowResponse:
+        """Handle user's response to 'log again' confirmation"""
+        message_lower = message.lower().strip()
+        
+        # Check for yes/no responses
+        if message_lower in ['log_again_yes', 'yes', 'y', 'sure', 'ok', 'okay', 'log again']:
+            logger.info(f"User {user_id} confirmed to log mood again")
+            # Show mood selector to let them log again
+            state.update_workflow_step('asking_mood')
+            return WorkflowResponse(
+                message="Sure! How are you feeling now? 😊",
+                completed=False,
+                next_state=ConversationState.WORKFLOW_ACTIVE,
+                ui_elements=['emoji_selector'],
+                extra_data={}
+            )
+        
+        elif message_lower in ['log_again_no', 'no', 'n', 'cancel', 'nevermind', 'keep current']:
+            logger.info(f"User {user_id} chose to keep current mood")
+            # Complete workflow without logging new mood
+            state.complete_workflow()
+            return WorkflowResponse(
+                message="No problem! Your current mood log is kept. 😊",
+                completed=True,
+                next_state=ConversationState.IDLE,
+                ui_elements=[],
+                extra_data={}
+            )
+        
+        else:
+            # Unclear response, ask again
+            return WorkflowResponse(
+                message="Would you like to log your mood again today?",
+                completed=False,
+                next_state=ConversationState.WORKFLOW_ACTIVE,
+                ui_elements=['action_buttons_multiple'],
+                extra_data={
+                    'actions': [
+                        {'id': 'log_again_yes', 'name': 'Yes, log again'},
+                        {'id': 'log_again_no', 'name': 'No, keep current'}
+                    ]
+                }
+            )
+
     def _handle_mood_selection(self, message: str, state: WorkflowState, user_id: int) -> WorkflowResponse:
         """Handle mood emoji selection"""
         if not validate_mood_emoji(message):

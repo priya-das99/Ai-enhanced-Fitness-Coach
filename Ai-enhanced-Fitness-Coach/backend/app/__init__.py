@@ -1,1 +1,0 @@
-# FastAPI Chat Assistant Application

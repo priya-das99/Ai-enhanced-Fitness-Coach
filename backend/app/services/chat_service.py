@@ -32,8 +32,8 @@ class ChatService:
         # Get or create session
         session_id = self.get_or_create_session(user_id)
         
-        # Load chat history first
-        chat_history = self.chat_repo.get_recent_messages(user_id, limit=100)
+        # Load recent chat history to check if user needs greeting
+        chat_history = self.chat_repo.get_recent_messages(user_id, limit=50)
         
         # Activity buttons for all users (including Log Mood)
         activity_buttons = [
@@ -47,52 +47,69 @@ class ChatService:
             {"id": "log_mood",     "label": "😊 Log Mood"},
         ]
         
-        # If no chat history exists, create initial greeting and save it
-        if not chat_history:
-            # Create greeting message
-            greeting_message = "Hey! How are you feeling today?"
+        # Check if user needs a greeting today
+        from datetime import date
+        today = date.today().isoformat()
+        
+        needs_greeting = True
+        has_messages_today = False
+        
+        if chat_history:
+            # Check if there are ANY messages from today (not just greetings)
+            for msg in chat_history:
+                msg_date = msg.get('timestamp', '')[:10]  # Get date part
+                if msg_date == today:
+                    has_messages_today = True
+                    break
             
-            # Save the greeting to chat history
-            self.chat_repo.save_message_with_session(
-                user_id=user_id,
-                session_id=session_id,
-                message=greeting_message,
-                sender='bot',
-                metadata={
-                    'ui_elements': ['emoji_selector', 'activity_buttons'],
+            # If user has ANY messages today, no greeting needed
+            if has_messages_today:
+                needs_greeting = False
+        
+        # Debug logging
+        import logging
+        logging.info(f"User {user_id} greeting check: needs_greeting={needs_greeting}, has_messages_today={has_messages_today}, today={today}")
+        if chat_history:
+            recent_messages = [(msg.get('timestamp', '')[:10], msg.get('sender'), msg.get('message', '')[:30]) 
+                             for msg in chat_history[-5:]]
+            logging.info(f"Recent messages: {recent_messages}")
+        
+        if needs_greeting:
+            # Try to get personalized greeting with insights first
+            personalized_greeting = self._get_personalized_greeting(user_id)
+            
+            if personalized_greeting:
+                # Use personalized greeting with insights
+                greeting_message = personalized_greeting['message']
+                ui_elements = personalized_greeting.get('ui_elements', ['emoji_selector', 'activity_buttons'])
+                
+                # Save the personalized greeting to chat history
+                self.chat_repo.save_message_with_session(
+                    user_id=user_id,
+                    session_id=session_id,
+                    message=greeting_message,
+                    sender='bot',
+                    metadata={
+                        'ui_elements': ui_elements,
+                        'activity_options': activity_buttons,
+                        'state': 'idle',
+                        'insight_type': 'proactive_greeting',
+                        'has_insight': True
+                    }
+                )
+                
+                # Return response with personalized greeting and insights
+                response = {
+                    'message': greeting_message,
+                    'state': 'idle',
+                    'ui_elements': ui_elements,
                     'activity_options': activity_buttons,
-                    'state': 'idle'
+                    'is_new_greeting': True,
+                    'has_insight': True,
+                    'insight': personalized_greeting.get('insight')
                 }
-            )
-            
-            # Reload chat history to include the greeting
-            chat_history = self.chat_repo.get_recent_messages(user_id, limit=100)
-            
-            # Return response with greeting and UI elements
-            response = {
-                'message': greeting_message,
-                'state': 'idle',
-                'ui_elements': ['emoji_selector', 'activity_buttons'],
-                'activity_options': activity_buttons,
-                'chat_history': chat_history
-            }
-        else:
-            # User has existing chat history
-            # Check if the last message was from today and was a greeting
-            from datetime import date
-            today = date.today().isoformat()
-            
-            # Check if we need to show a greeting (if no greeting today)
-            has_greeting_today = False
-            if chat_history:
-                for msg in reversed(chat_history[-10:]):  # Check last 10 messages
-                    msg_date = msg.get('timestamp', '')[:10]  # Get date part
-                    if msg_date == today and msg.get('sender') == 'bot' and 'feeling today' in msg.get('message', ''):
-                        has_greeting_today = True
-                        break
-            
-            if not has_greeting_today:
-                # Show greeting for today
+            else:
+                # Fallback to default greeting
                 greeting_message = "Hey! How are you feeling today?"
                 
                 # Save the greeting to chat history
@@ -114,17 +131,17 @@ class ChatService:
                     'state': 'idle',
                     'ui_elements': ['emoji_selector', 'activity_buttons'],
                     'activity_options': activity_buttons,
-                    'chat_history': chat_history
+                    'is_new_greeting': True
                 }
-            else:
-                # Already greeted today, just return UI elements
-                response = {
-                    'message': '',  # No new message, just load history
-                    'state': 'idle',
-                    'ui_elements': ['emoji_selector', 'activity_buttons'],
-                    'activity_options': activity_buttons,
-                    'chat_history': chat_history
-                }
+        else:
+            # User already has conversation today, just return UI elements
+            response = {
+                'message': '',  # No new message, frontend will load history
+                'state': 'idle',
+                'ui_elements': ['emoji_selector', 'activity_buttons'],
+                'activity_options': activity_buttons,
+                'is_new_greeting': False
+            }
         
         return response
     
@@ -142,9 +159,10 @@ class ChatService:
                     logging.info(f"Personalized greeting already shown today for user {user_id}")
                     return None
             
-            from app.services.insight_system import InsightSystem
+            # Use the unified insight system
+            from app.services.unified_insight_system import get_unified_insight_system
             
-            insight_system = InsightSystem()
+            insight_system = get_unified_insight_system()
             insight = insight_system.get_greeting_insight(user_id)
             
             if insight:
@@ -154,17 +172,19 @@ class ChatService:
                 # Build greeting with insight
                 message = insight['message']
                 
-                # Show activity buttons ONLY on initial greeting
-                # Frontend will keep them fixed at top, so no need to repeat
-                ui_elements = ['activity_buttons']
+                # Show activity buttons with the insight
+                ui_elements = ['emoji_selector', 'activity_buttons']
                 extra_data = {
                     'activity_options': [
                         {'id': 'log_water', 'label': '💧 Log Water'},
                         {'id': 'log_sleep', 'label': '😴 Log Sleep'},
                         {'id': 'log_exercise', 'label': '🏃 Log Exercise'},
-                        {'id': 'log_mood', 'label': '😊 Log Mood'}
-                    ],
-                    'persistent_buttons': False  # Don't repeat in chat
+                        {'id': 'log_mood', 'label': '😊 Log Mood'},
+                        {'id': 'log_weight', 'label': '⚖️ Log Weight'},
+                        {'id': 'log_steps', 'label': '👟 Log Steps'},
+                        {'id': 'log_calories', 'label': '🔥 Log Calories'},
+                        {'id': 'log_meal', 'label': '🍽️ Log Meal'}
+                    ]
                 }
                 
                 result = {
@@ -176,13 +196,16 @@ class ChatService:
                 # Add extra data
                 result.update(extra_data)
                 
+                import logging
+                logging.info(f"Generated proactive greeting insight for user {user_id}: {insight.get('pattern', {}).get('type', 'unknown')}")
+                
                 return result
             
             return None
             
         except Exception as e:
             import logging
-            logging.error(f"Failed to generate personalized greeting: {e}")
+            logging.error(f"Failed to generate personalized greeting: {e}", exc_info=True)
             return None
     
     def process_message(self, user_id: int, message: str) -> Dict:

@@ -28,6 +28,7 @@ class UserContextService:
     def get_daily_summary(self, user_id: int, target_date: str = None) -> Dict:
         """
         Get complete daily summary for user with proper aggregation rules.
+        ENHANCED: Now includes user_activity_history data for exercises.
         
         Returns:
             {
@@ -63,20 +64,19 @@ class UserContextService:
                 'sleep': {'value': 0, 'unit': 'hours', 'target': targets.get('sleep', {}).get('target', 8)},
                 'exercise': {'value': 0, 'unit': 'minutes', 'target': targets.get('exercise', {}).get('target', 30)},
                 'weight': {'value': 0, 'unit': 'kg', 'target': targets.get('weight', {}).get('target', 70)},
-                'steps': {'value': 0, 'unit': 'steps', 'target': targets.get('steps', {}).get('target', 10000)},  # Add steps
-                'calories': {'value': 0, 'unit': 'calories', 'target': targets.get('calories', {}).get('target', 2000)},  # Add calories
-                'meal': {'value': 0, 'unit': 'servings', 'target': targets.get('meal', {}).get('target', 3)},  # Add meal
+                'steps': {'value': 0, 'unit': 'steps', 'target': targets.get('steps', {}).get('target', 10000)},
+                'calories': {'value': 0, 'unit': 'calories', 'target': targets.get('calories', {}).get('target', 2000)},
+                'meal': {'value': 0, 'unit': 'servings', 'target': targets.get('meal', {}).get('target', 3)},
                 'mood': {'emoji': None, 'logged': False},
                 'total_activities': 0
             }
             
-            # Get activities using proper aggregation rules
+            # Get activities from health_activities table using proper aggregation rules
             for activity_type, aggregation_rule in self.ACTIVITY_AGGREGATION_RULES.items():
-                if activity_type in summary:  # Only process activities we track in summary
+                if activity_type in summary and activity_type != 'exercise':  # Handle exercise separately
                     
                     if aggregation_rule == 'latest':
                         # Get the most recent entry for this activity type
-                        # Use rowid as secondary sort to handle identical timestamps
                         cursor.execute('''
                             SELECT value, unit, timestamp
                             FROM health_activities
@@ -108,6 +108,38 @@ class UserContextService:
                             summary['total_activities'] += 1
                             logger.info(f"Sum {activity_type}: {result['total']} {result['unit']}")
             
+            # ENHANCED: Get exercise data from user_activity_history table
+            cursor.execute('''
+                SELECT SUM(duration_minutes) as total_minutes, COUNT(*) as activity_count
+                FROM user_activity_history
+                WHERE user_id = ? AND DATE(start_time) = ? AND completed = 1
+            ''', (user_id, target_date))
+            
+            exercise_result = cursor.fetchone()
+            if exercise_result and exercise_result['total_minutes']:
+                summary['exercise']['value'] = exercise_result['total_minutes']
+                summary['exercise']['unit'] = 'minutes'
+                summary['total_activities'] += exercise_result['activity_count']
+                logger.info(f"Exercise from user_activity_history: {exercise_result['total_minutes']} minutes ({exercise_result['activity_count']} activities)")
+            
+            # Also check health_activities for exercise (in case some exercises are logged there)
+            if summary['exercise']['value'] == 0:
+                exercise_aggregation = self.ACTIVITY_AGGREGATION_RULES.get('exercise', 'sum')
+                if exercise_aggregation == 'sum':
+                    cursor.execute('''
+                        SELECT SUM(value) as total, unit
+                        FROM health_activities
+                        WHERE user_id = ? AND activity_type = 'exercise' AND DATE(timestamp) = ?
+                        GROUP BY unit
+                    ''', (user_id, target_date))
+                    
+                    result = cursor.fetchone()
+                    if result and result['total']:
+                        summary['exercise']['value'] = result['total']
+                        summary['exercise']['unit'] = result['unit']
+                        summary['total_activities'] += 1
+                        logger.info(f"Exercise from health_activities: {result['total']} {result['unit']}")
+            
             # Get mood for the day
             cursor.execute('''
                 SELECT mood_emoji, timestamp
@@ -126,9 +158,8 @@ class UserContextService:
                 }
                 summary['total_activities'] += 1
         
-        logger.info(f"Daily summary for user {user_id} on {target_date}: {summary}")
+        logger.info(f"ENHANCED Daily summary for user {user_id} on {target_date}: {summary}")
         return summary
-    
     def get_challenge_progress_today(self, user_id: int, challenge_type: str) -> Optional[Dict]:
         """
         Get today's progress for specific challenge type.

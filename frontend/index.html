@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fitness Wellness Platform</title>
     <link rel="stylesheet" href="landing.css">
+    <link rel="stylesheet" href="chat.css">
     <link rel="stylesheet" href="system_notifications.css">
 </head>
 <body>
@@ -141,6 +142,42 @@
                     placeholder="Type your message..."
                     autocomplete="off"
                 >
+                
+                <!-- Demo Controls integrated into input area -->
+                <div class="demo-controls-container" id="demoControlsContainer">
+                    <button id="demoToggleBtn" class="demo-toggle-btn" title="Demo Controls">
+                        🎯
+                        <span class="demo-badge" id="demoBadge" style="display: none;">!</span>
+                    </button>
+                    
+                    <div class="demo-controls-panel" id="demoControlsPanel">
+                        <div class="demo-header">
+                            <h4>🎯 Demo Controls</h4>
+                            <button id="demoMinimizeBtn" class="demo-minimize-btn" title="Minimize">−</button>
+                        </div>
+                        <div class="demo-sections">
+                            <div class="demo-section">
+                                <h5>🧠 AI Insights</h5>
+                                <div class="demo-buttons">
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('day_pattern')">📅 Day Pattern</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('sleep_issue')">😴 Sleep Alert</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('activity_success')">🏃 Activity Success</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('weekly_summary')">📊 Weekly Summary</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('predictive')">🔮 Predictive</button>
+                                    <button class="demo-btn insight-btn" onclick="sendDemoInsight('stress_pattern')">😰 Stress Pattern</button>
+                                </div>
+                            </div>
+                            <div class="demo-section">
+                                <h5>💧 Reminders</h5>
+                                <div class="demo-buttons">
+                                    <button class="demo-btn reminder-btn" onclick="sendDemoReminder('water')">💧 Water Reminder</button>
+                                    <button class="demo-btn reminder-btn" onclick="sendDemoReminder('challenge')">🎯 Challenge Reminder</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
                 <button id="sendButton" class="send-button">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -151,17 +188,6 @@
 
             <div class="skip-container" id="skipContainer" style="display: none;">
                 <button id="skipButton" class="skip-btn">Skip</button>
-            </div>
-
-            <!-- Demo Reminder Buttons -->
-            <div class="demo-reminder-container" id="demoReminderContainer" style="display: none; padding: 10px; border-top: 1px solid #e0e0e0; background: #f9f9f9;">
-                <div style="font-size: 12px; color: #666; margin-bottom: 8px;">Demo Controls:</div>
-                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                    <button id="sendWaterReminderBtn" class="demo-btn" style="background: #4CAF50; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer;">💧 Water Reminder</button>
-                    <button id="sendChallengeReminderBtn" class="demo-btn" style="background: #FF9800; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer;">🎯 Challenge Reminder</button>
-                    <button id="sendBothRemindersBtn" class="demo-btn" style="background: #2196F3; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer;">🚀 Both Reminders</button>
-                    <button id="toggleDemoBtn" class="demo-btn" style="background: #9E9E9E; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer;">Hide Demo</button>
-                </div>
             </div>
         </div>
     </div>

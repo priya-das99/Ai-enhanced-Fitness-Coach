@@ -63,10 +63,10 @@ print(f"Frontend dir: {frontend_dir}")
 
 # Mount frontend directory at /frontend (this is working)
 if os.path.exists(frontend_dir):
-    print(f"✅ Frontend directory found: {frontend_dir}")
+    print(f"[OK] Frontend directory found: {frontend_dir}")
     app.mount("/frontend", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 else:
-    print(f"❌ Frontend directory not found: {frontend_dir}")
+    print(f"[ERROR] Frontend directory not found: {frontend_dir}")
 
 # Don't mount root as static files - we'll handle it with a route instead
 
@@ -77,16 +77,16 @@ else:
 async def startup_event():
     """Run on application startup"""
     print("=" * 60)
-    print(f"🚀 {settings.PROJECT_NAME} v{settings.VERSION}")
+    print(f"[START] {settings.PROJECT_NAME} v{settings.VERSION}")
     print("=" * 60)
     
     # Initialize database
     try:
         from app.core.init_db import init_database
         init_database()
-        print("  ✅ Database initialized")
+        print("  [OK] Database initialized")
     except Exception as e:
-        print(f"  ❌ Database initialization failed: {e}")
+        print(f"  [ERROR] Database initialization failed: {e}")
         logger.error(f"Database initialization failed: {e}")
     
     # Run migrations
@@ -97,46 +97,46 @@ async def startup_event():
         sys.path.insert(0, backend_dir)
         from run_migrations import run_all_migrations
         run_all_migrations()
-        print("  ✅ Migrations completed")
+        print("  [OK] Migrations completed")
     except Exception as e:
-        print(f"  ❌ Migration failed: {e}")
+        print(f"  [ERROR] Migration failed: {e}")
         logger.error(f"Migration failed: {e}")
     
     # Start scheduler for proactive notifications
     try:
         from app.scheduler import start_scheduler, stop_scheduler
         start_scheduler()
-        print("  ✅ Scheduler started")
-        logger.info("✅ Scheduler started")
+        print("  [OK] Scheduler started")
+        logger.info("[OK] Scheduler started")
     except ImportError as e:
-        print(f"  ⚠️  Scheduler not available: {e}")
+        print(f"  [WARN] Scheduler not available: {e}")
         logger.warning(f"Scheduler not available: {e}")
     except Exception as e:
-        print(f"  ❌ Scheduler failed to start: {e}")
+        print(f"  [ERROR] Scheduler failed to start: {e}")
         logger.error(f"Scheduler failed to start: {e}")
     
     print("Features:")
-    print("  ✅ JWT Authentication")
-    print("  ✅ Chat Assistant with LLM")
-    print("  ✅ Activity Tracking")
-    print("  ✅ Mood Logging")
+    print("  [OK] JWT Authentication")
+    print("  [OK] Chat Assistant with LLM")
+    print("  [OK] Activity Tracking")
+    print("  [OK] Mood Logging")
     print()
-    print(f"📚 API Docs: http://localhost:8000{settings.API_V1_PREFIX}/docs")
-    print(f"📖 ReDoc: http://localhost:8000{settings.API_V1_PREFIX}/redoc")
-    print(f"🌐 Frontend: http://localhost:8000/login.html")
+    print(f"[DOCS] API Docs: http://localhost:8000{settings.API_V1_PREFIX}/docs")
+    print(f"[DOCS] ReDoc: http://localhost:8000{settings.API_V1_PREFIX}/redoc")
+    print(f"[WEB] Frontend: http://localhost:8000/login.html")
     print("=" * 60)
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Run on application shutdown"""
-    logger.info("👋 Application shutting down...")
+    logger.info("Application shutting down...")
     
     # Stop scheduler
     try:
         from app.scheduler import stop_scheduler
         stop_scheduler()
-        logger.info("❌ Scheduler stopped")
+        logger.info("Scheduler stopped")
     except ImportError:
         logger.info("Scheduler was not available")
     except Exception as e:

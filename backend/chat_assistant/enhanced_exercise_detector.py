@@ -192,6 +192,116 @@ class EnhancedExerciseDetector:
         
         return None
     
+    def detect_multiple_exercises_with_context(self, text: str) -> List[Dict]:
+        """
+        Detect multiple exercises from a single text input
+        
+        Args:
+            text: User input text
+            
+        Returns:
+            List of exercise dictionaries
+        """
+        exercises = []
+        text_lower = text.lower()
+        
+        # Split text by common separators for multiple activities
+        separators = [' and ', ', and ', ', then ', ' then ', ', ', ';']
+        segments = [text]
+        
+        # Split text into segments
+        for separator in separators:
+            new_segments = []
+            for segment in segments:
+                new_segments.extend(segment.split(separator))
+            segments = new_segments
+        
+        # Process each segment
+        for segment in segments:
+            segment = segment.strip()
+            if not segment:
+                continue
+                
+            # Try to detect exercise in this segment
+            exercise = self.detect_exercise_with_context(segment)
+            if exercise and not exercise.get('needs_duration'):
+                exercises.append(exercise)
+            else:
+                # Try to find exercise + duration patterns in the segment
+                exercise_match = self._find_exercise_duration_pair(segment)
+                if exercise_match:
+                    exercises.append(exercise_match)
+        
+        return exercises
+    
+    def _find_exercise_duration_pair(self, text: str) -> Optional[Dict]:
+        """
+        Find exercise and duration pairs in text using regex patterns
+        
+        Args:
+            text: Text segment to analyze
+            
+        Returns:
+            Exercise dictionary or None
+        """
+        text_lower = text.lower()
+        
+        # Patterns to match "activity for duration" or "duration of activity"
+        patterns = [
+            # "played badminton for 30 minutes"
+            r'(?:played|did|practiced|went)\s+(\w+)\s+for\s+(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|h)',
+            # "30 minutes of badminton"
+            r'(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|h)\s+of\s+(\w+)',
+            # "badminton 30 minutes"
+            r'(\w+)\s+(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|h)',
+            # "30 min badminton"
+            r'(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|h)\s+(\w+)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                groups = match.groups()
+                
+                # Determine which group is activity and which is duration
+                if pattern.startswith(r'(?:played|did'):  # "played badminton for 30 minutes"
+                    activity_name = groups[0]
+                    value = float(groups[1])
+                    unit = groups[2]
+                elif 'of' in pattern:  # "30 minutes of badminton"
+                    value = float(groups[0])
+                    unit = groups[1]
+                    activity_name = groups[2]
+                else:  # Other patterns
+                    if groups[0].isdigit() or '.' in groups[0]:  # First group is number
+                        value = float(groups[0])
+                        unit = groups[1]
+                        activity_name = groups[2]
+                    else:  # First group is activity
+                        activity_name = groups[0]
+                        value = float(groups[1])
+                        unit = groups[2]
+                
+                # Check if it's a valid exercise activity
+                if self._is_likely_exercise_activity(activity_name):
+                    # Convert to standard unit (minutes)
+                    converted_value, standard_unit = self.unit_converter.convert_to_standard_unit(
+                        'exercise', value, unit
+                    )
+                    
+                    return {
+                        'activity_type': 'exercise',
+                        'activity_name': activity_name,
+                        'value': converted_value,
+                        'unit': standard_unit,
+                        'original_value': value,
+                        'original_unit': unit,
+                        'notes': text,
+                        'needs_duration': False
+                    }
+        
+        return None
+
     def detect_exercise_with_context(self, text: str) -> Optional[Dict]:
         """
         Main detection method that combines activity and duration detection

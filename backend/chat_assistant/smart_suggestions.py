@@ -1479,7 +1479,7 @@ def _get_llm_suggestions_OLD(mood_emoji: str, reason: str, context: dict, count:
     activities_desc = "\n".join([
         f"- {act['id']}: {act['name']} ({act['duration']}, {act['effort']} effort, "
         f"{'work-friendly' if act['work_friendly'] else 'needs space'}) - {act['description']}"
-        for act in WELLNESS_ACTIVITIES.values()
+        for act in WELLNESS_ACTIVITIES_FALLBACK.values()
     ])
     
     prompt = f"""You are a wellness AI selecting activities for a user feeling {mood_emoji} due to {reason}.

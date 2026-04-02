@@ -17,7 +17,7 @@ if current_dir not in sys.path:
 
 def main():
     print("=" * 60)
-    print("🚀 Starting FastAPI Chat Assistant (No Auto-Reload)")
+    print("[START] Starting FastAPI Chat Assistant (No Auto-Reload)")
     print("=" * 60)
     print(f"Working directory: {current_dir}")
     print()
@@ -34,14 +34,14 @@ def main():
             log_level="info"
         )
     except ImportError as e:
-        print("❌ Error: Missing dependencies")
+        print("[ERROR] Missing dependencies")
         print(f"   {e}")
         print()
         print("Please install requirements:")
         print("   pip install -r requirements-fastapi.txt")
         sys.exit(1)
     except Exception as e:
-        print(f"❌ Error starting server: {e}")
+        print(f"[ERROR] Error starting server: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

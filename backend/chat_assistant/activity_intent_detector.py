@@ -271,6 +271,19 @@ class ActivityIntentDetector:
             from .enhanced_exercise_detector import get_enhanced_exercise_detector
             
             enhanced_detector = get_enhanced_exercise_detector()
+            
+            # First try to detect multiple exercises
+            multiple_results = enhanced_detector.detect_multiple_exercises_with_context(text)
+            if multiple_results and len(multiple_results) > 1:
+                # Return the first exercise but log that multiple were found
+                logger.info(f"Multiple exercises detected: {len(multiple_results)} activities")
+                for i, result in enumerate(multiple_results):
+                    logger.info(f"  Exercise {i+1}: {result.get('activity_name', 'unknown')} - {result.get('value', 0)} {result.get('unit', 'minutes')}")
+                
+                # For now, return the first one (we'll handle multiple logging later)
+                return multiple_results[0]
+            
+            # Fall back to single exercise detection
             result = enhanced_detector.detect_exercise_with_context(text)
             
             if result and not result.get('needs_duration'):
@@ -491,7 +504,44 @@ class ActivityIntentDetector:
         """Detect all possible activities from text with confidence scoring"""
         activities = []
         
-        # Try each detector with confidence scoring
+        # Special handling for multiple exercises
+        try:
+            from .enhanced_exercise_detector import get_enhanced_exercise_detector
+            enhanced_detector = get_enhanced_exercise_detector()
+            multiple_exercises = enhanced_detector.detect_multiple_exercises_with_context(text)
+            
+            if multiple_exercises and len(multiple_exercises) > 1:
+                logger.info(f"Multiple exercises detected: {len(multiple_exercises)} activities")
+                # Add all exercises with confidence scoring
+                for exercise in multiple_exercises:
+                    confidence = self._calculate_confidence(text, 'exercise', exercise)
+                    exercise['confidence'] = confidence
+                    activities.append(exercise)
+                
+                # Also check for non-exercise activities
+                non_exercise_detectors = [
+                    ('water', self.detect_water_intake),
+                    ('sleep', self.detect_sleep),
+                    ('weight', self.detect_weight),
+                    ('steps', self.detect_steps),
+                    ('calories', self.detect_calories),
+                    ('meal', self.detect_meal)
+                ]
+                
+                for activity_type, detector in non_exercise_detectors:
+                    result = detector(text)
+                    if result:
+                        confidence = self._calculate_confidence(text, activity_type, result)
+                        result['confidence'] = confidence
+                        activities.append(result)
+                
+                # Sort by confidence (highest first)
+                activities.sort(key=lambda x: x.get('confidence', 0), reverse=True)
+                return activities
+        except ImportError:
+            pass
+        
+        # Original single activity detection
         detectors = [
             ('water', self.detect_water_intake),
             ('sleep', self.detect_sleep),

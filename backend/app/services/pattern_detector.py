@@ -42,7 +42,7 @@ class PatternDetector:
         mood_logs = self.db.query(MoodLog).filter(
             and_(
                 MoodLog.user_id == user_id,
-                MoodLog.created_at >= four_weeks_ago
+                MoodLog.timestamp >= four_weeks_ago
             )
         ).all()
         
@@ -50,11 +50,11 @@ class PatternDetector:
         day_moods = {i: [] for i in range(7)}  # 0=Monday, 6=Sunday
         
         for log in mood_logs:
-            day_of_week = log.created_at.weekday()
+            day_of_week = log.timestamp.weekday()
             day_moods[day_of_week].append({
                 'emoji': log.mood_emoji,
                 'reason': log.reason,
-                'intensity': log.intensity or 5
+                'intensity': log.mood_intensity or 5
             })
         
         # Analyze each day
@@ -92,7 +92,7 @@ class PatternDetector:
         mood_logs = self.db.query(MoodLog).filter(
             and_(
                 MoodLog.user_id == user_id,
-                MoodLog.created_at >= two_weeks_ago
+                MoodLog.timestamp >= two_weeks_ago
             )
         ).all()
         
@@ -100,7 +100,7 @@ class PatternDetector:
         hour_moods = {i: [] for i in range(24)}
         
         for log in mood_logs:
-            hour = log.created_at.hour
+            hour = log.timestamp.hour
             hour_moods[hour].append({
                 'emoji': log.mood_emoji,
                 'reason': log.reason
@@ -145,7 +145,7 @@ class PatternDetector:
         completions = self.db.query(ActivityCompletion).filter(
             and_(
                 ActivityCompletion.user_id == user_id,
-                ActivityCompletion.completed_at >= four_weeks_ago
+                ActivityCompletion.timestamp >= four_weeks_ago
             )
         ).all()
         
@@ -230,18 +230,18 @@ class PatternDetector:
         # Get last mood log
         last_log = self.db.query(MoodLog).filter(
             MoodLog.user_id == user_id
-        ).order_by(MoodLog.created_at.desc()).first()
+        ).order_by(MoodLog.timestamp.desc()).first()
         
         if not last_log:
             return None
         
-        days_since_last = (datetime.utcnow() - last_log.created_at).days
+        days_since_last = (datetime.utcnow() - last_log.timestamp).days
         
         if days_since_last >= 3:
             return {
                 'type': 'absence',
                 'days_absent': days_since_last,
-                'last_activity': last_log.created_at,
+                'last_activity': last_log.timestamp,
                 'description': f"You haven't logged mood in {days_since_last} days"
             }
         

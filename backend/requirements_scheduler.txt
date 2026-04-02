@@ -1,2 +1,0 @@
-# Scheduler dependencies
-apscheduler==3.10.4

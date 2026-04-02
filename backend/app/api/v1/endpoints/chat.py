@@ -397,26 +397,27 @@ async def trigger_demo_reminders(current_user: Dict = Depends(get_current_user))
 
 @router.post("/demo/water-reminder")
 async def trigger_water_reminder(current_user: Dict = Depends(get_current_user)):
-    """Trigger water reminder only"""
+    """Trigger water reminder only - Simple demo version"""
     try:
-        import sys
-        import os
+        from app.services.chat_service import ChatService
         
-        backend_path = os.path.join(os.path.dirname(__file__), '../../../../')
-        sys.path.append(backend_path)
-        
-        from demo_reminders import DemoReminderScript
-        
-        script = DemoReminderScript()
+        chat_service = ChatService()
         user_id = current_user['id']
         
-        script.setup_demo_data(user_id)
-        reminder = script.send_water_reminder(user_id)
+        # Create a simple demo water reminder message
+        demo_message = """💧 Hydration Check!
+
+It's been a while since your last water intake. Remember to stay hydrated! Your body needs water to function at its best.
+
+💡 Tip: Drinking water now will help you feel more energized and focused."""
+        
+        # Add the message to chat history
+        chat_service.add_message(user_id, "system", demo_message)
         
         return {
             "status": "success",
             "message": "Water reminder sent!",
-            "reminder": reminder['title']
+            "reminder": "💧 Hydration Check!"
         }
         
     except Exception as e:
@@ -424,27 +425,62 @@ async def trigger_water_reminder(current_user: Dict = Depends(get_current_user))
 
 @router.post("/demo/challenge-reminder")
 async def trigger_challenge_reminder(current_user: Dict = Depends(get_current_user)):
-    """Trigger challenge reminder only"""
+    """Trigger challenge reminder only - Simple demo version"""
     try:
-        import sys
-        import os
+        from app.services.chat_service import ChatService
         
-        backend_path = os.path.join(os.path.dirname(__file__), '../../../../')
-        sys.path.append(backend_path)
-        
-        from demo_reminders import DemoReminderScript
-        
-        script = DemoReminderScript()
+        chat_service = ChatService()
         user_id = current_user['id']
         
-        script.setup_demo_data(user_id)
-        reminder = script.send_challenge_reminder(user_id)
+        # Create a simple demo challenge reminder message
+        demo_message = """🎯 Daily Challenge Check-in
+
+How's your wellness journey going today? You're doing great! Keep up the momentum and stay consistent with your healthy habits.
+
+💪 Remember: Small consistent actions lead to big results over time."""
+        
+        # Add the message to chat history
+        chat_service.add_message(user_id, "system", demo_message)
         
         return {
             "status": "success",
             "message": "Challenge reminder sent!",
-            "reminder": reminder['title']
+            "reminder": "🎯 Daily Challenge Check-in"
         }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send challenge reminder: {str(e)}")
+
+@router.post("/demo/reminders")
+async def trigger_both_reminders(current_user: Dict = Depends(get_current_user)):
+    """Trigger both water and challenge reminders - Simple demo version"""
+    try:
+        from app.services.chat_service import ChatService
+        
+        chat_service = ChatService()
+        user_id = current_user['id']
+        
+        # Create combined demo message
+        demo_message = """🚀 Wellness Check-in
+
+💧 Hydration Reminder: Don't forget to drink water! Stay hydrated for better energy and focus.
+
+🎯 Challenge Update: You're making great progress on your wellness journey. Keep up the excellent work!
+
+✨ You've got this! Every healthy choice counts."""
+        
+        # Add the message to chat history
+        chat_service.add_message(user_id, "system", demo_message)
+        
+        return {
+            "status": "success",
+            "message": "Both reminders sent!",
+            "water_reminder": "💧 Hydration Reminder",
+            "challenge_reminder": "🎯 Challenge Update"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send reminders: {str(e)}")
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send challenge reminder: {str(e)}")
