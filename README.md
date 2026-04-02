@@ -105,21 +105,11 @@ Once the backend is running, visit:
 - Progress tracking
 - Gamification elements
 
-## Testing
-
-Run the test suite:
-```bash
-cd backend
-python tests/run_all_tests.py
-```
 
 ## Documentation
 
 Comprehensive documentation is available in the `Docs/` directory:
-- System architecture
-- API specifications
-- LLM integration guides
-- Deployment instructions
+
 
 ## Contributing
 
