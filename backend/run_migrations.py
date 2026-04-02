@@ -37,11 +37,16 @@ def run_postgresql_migrations():
     # TODO: Implement PostgreSQL migrations
     pass
 
-def main():
+def run_all_migrations():
+    """Public migration entrypoint used by app.main startup."""
     if settings.is_postgresql:
         run_postgresql_migrations()
     else:
         run_sqlite_migrations()
+
+# Keep compatibility with direct script execution
+def main():
+    run_all_migrations()
 
 if __name__ == "__main__":
     main()
